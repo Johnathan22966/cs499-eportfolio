@@ -1,0 +1,9 @@
+PASS: 59321 assertions; planned example, boundaries, filters, sorting, input, 100 randomized datasets.
+Java: 21.0.10; VM: OpenJDK 64-Bit Server VM
+OS: Windows 11 amd64; logical processors: 16
+Seed 499; quantity/minimum uniform [0,99]; shuffled input; 12 warmups; median of 21 alternating trials.
+n,k,sorted_list_median_ms,heap_drain_median_ms
+100,47,0.0226,0.0188
+1000,492,0.1236,0.1372
+10000,4894,0.9282,1.0555
+100000,49509,16.2651,18.3923

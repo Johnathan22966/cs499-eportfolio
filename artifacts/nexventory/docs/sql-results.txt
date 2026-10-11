@@ -1,0 +1,2 @@
+PASS: desktop SQLite 3.53.1 checked exact CREATE/ALTER statements from source, v2 preservation, fresh schema, constraints, counts and target edits; 15 XML resources parsed.
+Android SQLiteOpenHelper and emulator workflows require the separate instrumentation/manual checks.

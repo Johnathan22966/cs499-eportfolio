@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F3EFE6"
+    tools:context=".MainActivity">
+
+    <ScrollView
+        android:id="@+id/scrollView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:fillViewport="true"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:id="@+id/mainLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/appTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="4dp"
+                android:gravity="center"
+                android:text="Nexventory"
+                android:textColor="#2F2F2F"
+                android:textSize="28sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/subTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:gravity="center"
+                android:text="Inventory Database Dashboard"
+                android:textColor="#666666"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/searchTab"
+                android:layout_width="160dp"
+                android:layout_height="36dp"
+                android:background="#D9C29E"
+                android:gravity="center"
+                android:text="Search"
+                android:textColor="#2F2F2F"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/searchFolder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#FFF8E8"
+                android:elevation="3dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:text="Search Inventory"
+                    android:textColor="#2F2F2F"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/searchBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:background="#FFFFFF"
+                    android:hint="Search by name, SKU, or barcode"
+                    android:inputType="text"
+                    android:padding="10dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/summaryTab"
+                android:layout_width="180dp"
+                android:layout_height="36dp"
+                android:background="#BFD8BD"
+                android:gravity="center"
+                android:text="Inventory Summary"
+                android:textColor="#2F2F2F"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/summaryFolder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#F4FFF2"
+                android:elevation="3dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/totalItemsText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="Total Items: 0"
+                    android:textColor="#2F2F2F"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/lowStockText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:text="Low Stock: 0"
+                    android:textColor="#2F2F2F"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/outOfStockText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Out of Stock: 0"
+                    android:textColor="#2F2F2F"
+                    android:textSize="16sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/inventoryTab"
+                android:layout_width="180dp"
+                android:layout_height="36dp"
+                android:background="#B9CBE8"
+                android:gravity="center"
+                android:text="Database Grid"
+                android:textColor="#2F2F2F"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/inventoryFolder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#F2F6FF"
+                android:elevation="3dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    android:text="Inventory Records"
+                    android:textColor="#2F2F2F"
+                    android:textStyle="bold" />
+
+                <TableLayout
+                    android:id="@+id/inventoryTable"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="#FFFFFF"
+                    android:stretchColumns="0,1,2,3,4">
+
+                    <TableRow android:background="#D9E6FF">
+                        <TextView
+                            android:padding="8dp"
+                            android:text="Item"
+                            android:textColor="#2F2F2F"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:padding="8dp"
+                            android:text="Qty"
+                            android:textColor="#2F2F2F"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:padding="8dp"
+                            android:text="Status"
+                            android:textColor="#2F2F2F"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:padding="8dp"
+                            android:text="Edit"
+                            android:textColor="#2F2F2F"
+                            android:textStyle="bold" />
+                        <TextView
+                            android:padding="8dp"
+                            android:text="Delete"
+                            android:textColor="#2F2F2F"
+                            android:textStyle="bold" />
+                    </TableRow>
+                </TableLayout>
+
+                <Button
+                    android:id="@+id/addItemButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:text="+ Add Item" />
+
+                <Button
+                    android:id="@+id/updateItemButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="Update Selected Item" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/addItemTab"
+                android:layout_width="180dp"
+                android:layout_height="36dp"
+                android:background="#D9C29E"
+                android:gravity="center"
+                android:text="Add New Item"
+                android:textColor="#2F2F2F"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/addItemFolder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#FFF8E8"
+                android:elevation="3dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <EditText
+                    android:id="@+id/itemNameInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="#FFFFFF"
+                    android:hint="Item name"
+                    android:inputType="text"
+                    android:padding="10dp" />
+
+                <EditText
+                    android:id="@+id/itemSkuInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginBottom="8dp"
+                    android:background="#FFFFFF"
+                    android:hint="SKU number"
+                    android:inputType="text"
+                    android:padding="10dp" />
+
+                <EditText
+                    android:id="@+id/itemQuantityInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:background="#FFFFFF"
+                    android:hint="Quantity"
+                    android:inputType="number"
+                    android:padding="10dp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/alertsTab"
+                android:layout_width="160dp"
+                android:layout_height="36dp"
+                android:background="#E8B9B9"
+                android:gravity="center"
+                android:text="Alerts"
+                android:textColor="#2F2F2F"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/alertsFolder"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:background="#FFF1F1"
+                android:elevation="3dp"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="6dp"
+                    android:text="Zero Stock Alert: Ink Cartridge needs restocking. Open SMS settings to choose notification permissions."
+                    android:textColor="#2F2F2F"
+                    android:textSize="15sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/bottomNavigation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="#FFFFFF"
+                android:orientation="horizontal"
+                android:padding="6dp">
+
+                <Button
+                    android:id="@+id/homeButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="🏠" />
+
+                <Button
+                    android:id="@+id/searchButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="🔎" />
+
+                <Button
+                    android:id="@+id/alertsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="✉️" />
+
+                <Button
+                    android:id="@+id/settingsButton"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:text="⚙️" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</androidx.constraintlayout.widget.ConstraintLayout>
