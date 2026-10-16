@@ -1,0 +1,825 @@
+--- milestone_two/ENHANCEMENT_NOTES.md
++++ enhanced/ENHANCEMENT_NOTES.md
+@@ -1,4 +1,6 @@
+-# Nexventory Milestone Two software design and engineering
++# Historical Milestone Two software design and engineering notes
++
++These notes describe the inherited Milestone Two work. This project now also includes the Milestone Three restock algorithm, minimum-stock targets, sorting, filters, and verification harness. See the submission's `docs/ALGORITHMS_AND_CHANGES.md` and `docs/VERIFICATION.md` for the current enhancement and its verification status. The later-enhancement scope at the end of this historical note reflects the earlier milestone, not the current feature set.
+ 
+ Original artifact: CS 360 Nexventory Android application. This enhanced copy is for CS 499 Milestone Two.
+ 
+--- milestone_two/app/build.gradle
++++ enhanced/app/build.gradle
+@@ -14,8 +14,8 @@
+         applicationId "com.example.nexventory"
+         minSdk 23
+         targetSdk 36
+-        versionCode 1
+-        versionName "1.0"
++        versionCode 2
++        versionName "1.1"
+ 
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+     }
+@@ -40,4 +40,4 @@
+     testImplementation libs.junit
+     androidTestImplementation libs.espresso.core
+     androidTestImplementation libs.ext.junit
+-}+}
+--- milestone_two/app/src/androidTest/java/com/example/nexventory/RestockDatabaseTest.java
++++ enhanced/app/src/androidTest/java/com/example/nexventory/RestockDatabaseTest.java
+@@ -0,0 +1,74 @@
++package com.example.nexventory;
++
++import android.content.Context;
++import android.content.ContextWrapper;
++import android.database.DatabaseErrorHandler;
++import android.database.sqlite.SQLiteDatabase;
++import androidx.test.platform.app.InstrumentationRegistry;
++import org.junit.Test;
++import static org.junit.Assert.*;
++import java.io.File;
++import java.util.List;
++
++/** Uses a uniquely named temporary database, never the user's nexventory.db. */
++public class RestockDatabaseTest {
++    private Context isolatedContext() {
++        Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();
++        final File file=new File(target.getCacheDir(),"restock-test-"+System.nanoTime()+".db");
++        return new ContextWrapper(target) {
++            @Override public File getDatabasePath(String name) { return file; }
++            @Override public SQLiteDatabase openOrCreateDatabase(String name,int mode,SQLiteDatabase.CursorFactory factory) {
++                return SQLiteDatabase.openOrCreateDatabase(file,factory);
++            }
++            @Override public SQLiteDatabase openOrCreateDatabase(String name,int mode,SQLiteDatabase.CursorFactory factory,DatabaseErrorHandler handler) {
++                return SQLiteDatabase.openOrCreateDatabase(file.getPath(),factory,handler);
++            }
++            @Override public boolean deleteDatabase(String name) { return SQLiteDatabase.deleteDatabase(file); }
++        };
++    }
++    @Test public void migrationPreservesRecordsAndTargetsPersist() {
++        Context context=isolatedContext();
++        try {
++            try(SQLiteDatabase old=context.openOrCreateDatabase("nexventory.db",0,null)) {
++                old.execSQL("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL)");
++                old.execSQL("CREATE TABLE inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sku TEXT UNIQUE NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0))");
++                old.execSQL("INSERT INTO users(username,password) VALUES (?,?)",new Object[]{"tester",PasswordHasher.hash("test-only-pass")});
++                old.execSQL("INSERT INTO inventory(name,sku,quantity) VALUES ('Cable','OLD',3)");
++                old.setVersion(2);
++            }
++            try(DatabaseHelper helper=new DatabaseHelper(context)) {
++                assertTrue(helper.validateUser("tester","test-only-pass"));
++                InventoryItem old=helper.getAllInventoryItems().get(0);
++                assertEquals(1,old.getId()); assertEquals(3,old.getQuantity()); assertEquals(5,old.getMinimumStock());
++                assertTrue(helper.updateInventoryItem(old.getId(),old.getName(),old.getSku(),3,10));
++                assertFalse(helper.addInventoryItem("Bad","BAD",1,-1));
++                assertTrue(helper.addInventoryItem("No target","NONE",0,0));
++                assertEquals(1,helper.getRestockCount());
++                assertEquals(1,helper.getLowStockCount());
++                assertEquals(1,helper.getOutOfStockCount());
++            }
++            try(DatabaseHelper reopened=new DatabaseHelper(context)) {
++                assertEquals(10,reopened.searchInventoryItems("OLD",SearchMode.SKU).get(0).getMinimumStock());
++                assertEquals(2,reopened.getTotalItems());
++            }
++        } finally { context.deleteDatabase("nexventory.db"); }
++    }
++    @Test public void freshDatabaseSearchAndRestockFiltersCompose() {
++        Context context=isolatedContext();
++        try(DatabaseHelper helper=new DatabaseHelper(context)) {
++            assertTrue(helper.addInventoryItem("Adapter","A",0,4));
++            assertTrue(helper.addInventoryItem("Patch Cable","C",3,10));
++            assertTrue(helper.addInventoryItem("Spare Switch","S",2,3));
++            assertTrue(helper.addInventoryItem("Label Roll","L",12,5));
++            assertTrue(helper.addInventoryItem("100%_Cable","LITERAL",5,5));
++            assertEquals(1,helper.searchInventoryItems("%_",SearchMode.PRODUCT_NAME).size());
++            assertEquals(2,helper.searchInventoryItems("cable",SearchMode.PRODUCT_NAME).size());
++            assertTrue(helper.searchInventoryItems("missing",SearchMode.SKU).isEmpty());
++            assertTrue(helper.searchInventoryItems("invalid",SearchMode.ITEM_NUMBER).isEmpty());
++            List<InventoryItem> result=InventoryAlgorithms.select(helper.getAllInventoryItems(),
++                    InventoryAlgorithms.StockFilter.NEEDS_RESTOCK,InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY);
++            assertEquals(3,result.size()); assertEquals("Adapter",result.get(0).getName());
++            assertEquals("Patch Cable",result.get(1).getName()); assertEquals("Spare Switch",result.get(2).getName());
++        } finally { context.deleteDatabase("nexventory.db"); }
++    }
++}
+--- milestone_two/app/src/main/java/com/example/nexventory/DatabaseHelper.java
++++ enhanced/app/src/main/java/com/example/nexventory/DatabaseHelper.java
+@@ -12,7 +12,7 @@
+ 
+ public class DatabaseHelper extends SQLiteOpenHelper {
+     private static final String DATABASE_NAME = "nexventory.db";
+-    private static final int DATABASE_VERSION = 2;
++    private static final int DATABASE_VERSION = 3;
+ 
+     private static final String TABLE_USERS = "users";
+     private static final String TABLE_INVENTORY = "inventory";
+@@ -34,7 +34,8 @@
+                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                 "name TEXT NOT NULL, " +
+                 "sku TEXT UNIQUE NOT NULL, " +
+-                "quantity INTEGER NOT NULL CHECK(quantity >= 0))");
++                "quantity INTEGER NOT NULL CHECK(quantity >= 0), " +
++                "minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock >= 0))");
+     }
+ 
+     @Override
+@@ -55,6 +56,11 @@
+                 db.update(TABLE_USERS, values, "id = ?", new String[]{String.valueOf(ids.get(i))});
+             }
+         }
++        if (oldVersion < 3) {
++            // Preserve inventory and account values; existing items start with target 5.
++            db.execSQL("ALTER TABLE " + TABLE_INVENTORY +
++                    " ADD COLUMN minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock >= 0)");
++        }
+     }
+ 
+     public boolean createUser(String username, String password) {
+@@ -75,24 +81,26 @@
+         }
+     }
+ 
+-    public boolean addInventoryItem(String name, String sku, int quantity) {
+-        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0) return false;
++    public boolean addInventoryItem(String name, String sku, int quantity, int minimumStock) {
++        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0 || minimumStock < 0) return false;
+         SQLiteDatabase db = getWritableDatabase();
+         ContentValues values = new ContentValues();
+         values.put("name", name);
+         values.put("sku", sku);
+         values.put("quantity", quantity);
++        values.put("minimum_stock", minimumStock);
+         try { return db.insertOrThrow(TABLE_INVENTORY, null, values) != -1; }
+         catch (SQLiteConstraintException error) { return false; }
+     }
+ 
+-    public boolean updateInventoryItem(int id, String name, String sku, int quantity) {
+-        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0) return false;
++    public boolean updateInventoryItem(int id, String name, String sku, int quantity, int minimumStock) {
++        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0 || minimumStock < 0) return false;
+         SQLiteDatabase db = getWritableDatabase();
+         ContentValues values = new ContentValues();
+         values.put("name", name);
+         values.put("sku", sku);
+         values.put("quantity", quantity);
++        values.put("minimum_stock", minimumStock);
+         try {
+             return db.update(TABLE_INVENTORY, values, "id = ?", new String[]{String.valueOf(id)}) > 0;
+         } catch (SQLiteConstraintException error) {
+@@ -170,11 +178,11 @@
+             args = new String[]{pattern};
+         }
+         try (Cursor cursor = db.rawQuery(
+-                "SELECT id, name, sku, quantity FROM " + TABLE_INVENTORY
+-                        + where + " ORDER BY name ASC, id ASC", args)) {
++                "SELECT id, name, sku, quantity, minimum_stock FROM " + TABLE_INVENTORY
++                        + where, args)) {
+             while (cursor.moveToNext()) {
+                 items.add(new InventoryItem(cursor.getInt(0), cursor.getString(1),
+-                        cursor.getString(2), cursor.getInt(3)));
++                        cursor.getString(2), cursor.getInt(3), cursor.getInt(4)));
+             }
+         }
+         return items;
+@@ -194,7 +202,7 @@
+     public int getLowStockCount() {
+         SQLiteDatabase db = getReadableDatabase();
+         Cursor cursor = db.rawQuery(
+-                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity > 0 AND quantity <= 5",
++                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity > 0 AND quantity < minimum_stock",
+                 null);
+         int count = 0;
+         if (cursor.moveToFirst()) {
+@@ -202,6 +210,13 @@
+         }
+         cursor.close();
+         return count;
++    }
++
++    public int getRestockCount() {
++        try (Cursor cursor = getReadableDatabase().rawQuery(
++                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity < minimum_stock", null)) {
++            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
++        }
+     }
+ 
+     public int getOutOfStockCount() {
+--- milestone_two/app/src/main/java/com/example/nexventory/InputRules.java
++++ enhanced/app/src/main/java/com/example/nexventory/InputRules.java
+@@ -14,6 +14,13 @@
+         }
+     }
+ 
++    public static int minimumStock(String value) {
++        try { return quantity(value); }
++        catch (IllegalArgumentException error) {
++            throw new IllegalArgumentException(error.getMessage().replace("Quantity", "Minimum stock"), error);
++        }
++    }
++
+     public static String required(String value, String label) {
+         String clean = value == null ? "" : value.trim();
+         if (clean.isEmpty()) throw new IllegalArgumentException(label + " is required");
+--- milestone_two/app/src/main/java/com/example/nexventory/InventoryAlgorithms.java
++++ enhanced/app/src/main/java/com/example/nexventory/InventoryAlgorithms.java
+@@ -0,0 +1,69 @@
++package com.example.nexventory;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.Comparator;
++import java.util.List;
++import java.util.PriorityQueue;
++
++/** Pure inventory rules, independent of Android and persistence. Never mutates input. */
++public final class InventoryAlgorithms {
++    private InventoryAlgorithms() {}
++
++    public enum StockFilter { ALL, NEEDS_RESTOCK, OUT, LOW, GOOD }
++    public enum SortOrder { NAME, QUANTITY, RESTOCK_PRIORITY }
++
++    // Case-insensitive name order; stable database ID resolves equal names.
++    public static final Comparator<InventoryItem> BY_NAME = (a, b) -> {
++        int result = a.getName().compareToIgnoreCase(b.getName());
++        return result != 0 ? result : Integer.compare(a.getId(), b.getId());
++    };
++    public static final Comparator<InventoryItem> BY_QUANTITY = (a, b) -> {
++        int result = Integer.compare(a.getQuantity(), b.getQuantity());
++        return result != 0 ? result : BY_NAME.compare(a, b);
++    };
++    public static final Comparator<InventoryItem> BY_RESTOCK_PRIORITY = (a, b) -> {
++        // Candidates first, then out-of-stock candidates, then descending shortage.
++        int result = Boolean.compare(b.needsRestock(), a.needsRestock());
++        if (result != 0) return result;
++        if (a.needsRestock()) {
++            result = Boolean.compare(b.getQuantity() == 0, a.getQuantity() == 0);
++            if (result != 0) return result;
++            result = Integer.compare(b.getShortage(), a.getShortage());
++            if (result != 0) return result;
++        }
++        return BY_NAME.compare(a, b);
++    };
++
++    public static boolean matches(InventoryItem item, StockFilter filter) {
++        switch (filter) {
++            case NEEDS_RESTOCK: return item.needsRestock();
++            case OUT: return item.getQuantity() == 0;
++            case LOW: return item.getQuantity() > 0 && item.needsRestock();
++            case GOOD: return item.getQuantity() > 0 && !item.needsRestock();
++            default: return true;
++        }
++    }
++
++    /** O(n + k log k) time and O(k) extra storage for k selected records. */
++    public static List<InventoryItem> select(List<InventoryItem> source,
++            StockFilter filter, SortOrder order) {
++        List<InventoryItem> selected = new ArrayList<>();
++        for (InventoryItem item : source) if (matches(item, filter)) selected.add(item);
++        Comparator<InventoryItem> comparator = order == SortOrder.RESTOCK_PRIORITY
++                ? BY_RESTOCK_PRIORITY : order == SortOrder.QUANTITY ? BY_QUANTITY : BY_NAME;
++        Collections.sort(selected, comparator);
++        return selected;
++    }
++
++    /** Comparison implementation: drain the heap; iteration alone is not ordered.
++     * Repeated offer/poll costs O(n + k log k), with O(k) storage.
++     */
++    public static List<InventoryItem> restockUsingHeap(List<InventoryItem> source) {
++        PriorityQueue<InventoryItem> queue = new PriorityQueue<>(11, BY_RESTOCK_PRIORITY);
++        for (InventoryItem item : source) if (item.needsRestock()) queue.offer(item);
++        List<InventoryItem> result = new ArrayList<>(queue.size());
++        while (!queue.isEmpty()) result.add(queue.poll());
++        return result;
++    }
++}
+--- milestone_two/app/src/main/java/com/example/nexventory/InventoryItem.java
++++ enhanced/app/src/main/java/com/example/nexventory/InventoryItem.java
+@@ -5,8 +5,16 @@
+     private final String name;
+     private final String sku;
+     private final int quantity;
++    private final int minimumStock;
+ 
+     public InventoryItem(int id, String name, String sku, int quantity) {
++        this(id, name, sku, quantity, 5);
++    }
++
++    public InventoryItem(int id, String name, String sku, int quantity, int minimumStock) {
++        if (quantity < 0 || minimumStock < 0) throw new IllegalArgumentException("Stock values cannot be negative");
++        if (name == null || sku == null) throw new IllegalArgumentException("Name and SKU are required");
++        this.minimumStock = minimumStock;
+         this.id = id;
+         this.name = name;
+         this.sku = sku;
+@@ -29,10 +37,17 @@
+         return quantity;
+     }
+ 
++    public int getMinimumStock() { return minimumStock; }
++
++    /** Both values are nonnegative ints, so this subtraction cannot overflow. */
++    public int getShortage() { return Math.max(0, minimumStock - quantity); }
++
++    public boolean needsRestock() { return getShortage() > 0; }
++
+     public String getStatus() {
+         if (quantity == 0) {
+             return "Out";
+-        } else if (quantity <= 5) {
++        } else if (quantity < minimumStock) {
+             return "Low";
+         }
+         return "Good";
+--- milestone_two/app/src/main/java/com/example/nexventory/InventoryRepository.java
++++ enhanced/app/src/main/java/com/example/nexventory/InventoryRepository.java
+@@ -11,12 +11,12 @@
+         database = new DatabaseHelper(context);
+     }
+ 
+-    public boolean add(String name, String sku, int quantity) {
+-        return database.addInventoryItem(name, sku, quantity);
++    public boolean add(String name, String sku, int quantity, int minimumStock) {
++        return database.addInventoryItem(name, sku, quantity, minimumStock);
+     }
+ 
+-    public boolean update(int id, String name, String sku, int quantity) {
+-        return database.updateInventoryItem(id, name, sku, quantity);
++    public boolean update(int id, String name, String sku, int quantity, int minimumStock) {
++        return database.updateInventoryItem(id, name, sku, quantity, minimumStock);
+     }
+ 
+     public boolean delete(int id) { return database.deleteInventoryItem(id); }
+@@ -26,6 +26,11 @@
+     public List<InventoryItem> search(String query, SearchMode mode) {
+         return database.searchInventoryItems(query, mode);
+     }
++    public List<InventoryItem> select(String query, SearchMode mode,
++            InventoryAlgorithms.StockFilter filter, InventoryAlgorithms.SortOrder order) {
++        return InventoryAlgorithms.select(search(query, mode), filter, order);
++    }
++    public int restockCount() { return database.getRestockCount(); }
+     public int total() { return database.getTotalItems(); }
+     public int lowStock() { return database.getLowStockCount(); }
+     public int outOfStock() { return database.getOutOfStockCount(); }
+--- milestone_two/app/src/main/java/com/example/nexventory/MainActivity.java
++++ enhanced/app/src/main/java/com/example/nexventory/MainActivity.java
+@@ -3,6 +3,9 @@
+ import android.content.Intent;
+ import android.os.Bundle;
+ import android.widget.Button;
++import android.widget.Spinner;
++import android.widget.ArrayAdapter;
++import android.widget.AdapterView;
+ import android.widget.EditText;
+ import android.text.Editable;
+ import android.text.TextWatcher;
+@@ -30,6 +33,11 @@
+     private EditText itemNameInput;
+     private EditText itemSkuInput;
+     private EditText itemQuantityInput;
++    private EditText minimumStockInput;
++    private Spinner stockFilterSpinner;
++    private Spinner sortOrderSpinner;
++    private TextView resultCountText;
++    private boolean screenReady;
+     private EditText searchBar;
+     private ScrollView scrollView;
+     private View itemForm;
+@@ -64,6 +72,10 @@
+         itemNameInput = findViewById(R.id.itemNameInput);
+         itemSkuInput = findViewById(R.id.itemSkuInput);
+         itemQuantityInput = findViewById(R.id.itemQuantityInput);
++        minimumStockInput = findViewById(R.id.minimumStockInput);
++        stockFilterSpinner = findViewById(R.id.stockFilterSpinner);
++        sortOrderSpinner = findViewById(R.id.sortOrderSpinner);
++        resultCountText = findViewById(R.id.resultCountText);
+         searchBar = findViewById(R.id.searchBar);
+         searchBar.addTextChangedListener(new TextWatcher() {
+             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+@@ -143,7 +155,26 @@
+         settingsButton.setOnClickListener(v -> openNotificationScreen());
+         alertsButton.setOnClickListener(v -> openNotificationScreen());
+ 
++        configureSpinner(stockFilterSpinner, new String[]{"All stock", "Needs restocking", "Out of stock", "Low stock", "Good stock"});
++        configureSpinner(sortOrderSpinner, new String[]{"Name A to Z", "Quantity low to high", "Restock priority"});
++        findViewById(R.id.restockButton).setOnClickListener(v -> {
++            searchBar.setText("");
++            stockFilterSpinner.setSelection(InventoryAlgorithms.StockFilter.NEEDS_RESTOCK.ordinal());
++            sortOrderSpinner.setSelection(InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY.ordinal());
++            loadInventoryGrid();
++        });
++        screenReady = true;
+         loadInventoryGrid();
++    }
++
++    private void configureSpinner(Spinner spinner, String[] choices) {
++        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, choices);
++        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
++        spinner.setAdapter(adapter);
++        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
++            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) { loadInventoryGrid(); }
++            public void onNothingSelected(AdapterView<?> parent) {}
++        });
+     }
+ 
+     private void addInventoryItem() {
+@@ -158,9 +189,12 @@
+         int quantity;
+         try { quantity = InputRules.quantity(quantityText); }
+         catch (IllegalArgumentException error) { itemQuantityInput.setError(error.getMessage()); return; }
+-        if (inventoryRepository.add(name, sku, quantity)) {
++        int minimumStock;
++        try { minimumStock = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
++        catch (IllegalArgumentException error) { minimumStockInput.setError(error.getMessage()); return; }
++        if (inventoryRepository.add(name, sku, quantity, minimumStock)) {
+             Toast.makeText(this, "Inventory item added", Toast.LENGTH_SHORT).show();
+-            showSmsResult(name, quantity);
++            showSmsResult(name, quantity, minimumStock);
+             clearInputs();
+             loadInventoryGrid();
+         } else {
+@@ -187,9 +221,12 @@
+         int quantity;
+         try { quantity = InputRules.quantity(quantityText); }
+         catch (IllegalArgumentException error) { itemQuantityInput.setError(error.getMessage()); return; }
+-        if (inventoryRepository.update(selectedItemId, name, sku, quantity)) {
++        int minimumStock;
++        try { minimumStock = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
++        catch (IllegalArgumentException error) { minimumStockInput.setError(error.getMessage()); return; }
++        if (inventoryRepository.update(selectedItemId, name, sku, quantity, minimumStock)) {
+             Toast.makeText(this, "Inventory item updated", Toast.LENGTH_SHORT).show();
+-            showSmsResult(name, quantity);
++            showSmsResult(name, quantity, minimumStock);
+             clearInputs();
+             loadInventoryGrid();
+         } else {
+@@ -208,10 +245,14 @@
+     }
+ 
+     private void loadInventoryGrid() {
++        if (!screenReady) return;
+         selectedRow = null;
+         inventoryList.removeAllViews();
+ 
+-        List<InventoryItem> items = inventoryRepository.search(searchBar.getText().toString(), searchMode);
++        List<InventoryItem> items = inventoryRepository.select(searchBar.getText().toString(), searchMode,
++                InventoryAlgorithms.StockFilter.values()[stockFilterSpinner.getSelectedItemPosition()],
++                InventoryAlgorithms.SortOrder.values()[sortOrderSpinner.getSelectedItemPosition()]);
++        resultCountText.setText("Showing " + items.size() + " matching item(s)");
+         noResultsText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+         for (InventoryItem item : items) {
+             addInventoryRow(item);
+@@ -223,9 +264,9 @@
+         totalItemsText.setText("Total Items: " + total);
+         lowStockText.setText("Low Stock: " + low);
+         outOfStockText.setText("Out of Stock: " + out);
+-        if (out > 0) alertSummaryText.setText("Out of stock: " + out + " item(s) need restocking.");
+-        else if (low > 0) alertSummaryText.setText("Low stock: " + low + " item(s) need attention.");
+-        else alertSummaryText.setText("No low stock alerts.");
++        int restock = inventoryRepository.restockCount();
++        alertSummaryText.setText(restock == 0 ? "No items below their restock target."
++                : restock + " item(s) below their restock target. Tap Show Restock List to prioritize them.");
+     }
+ 
+     private void addInventoryRow(InventoryItem item) {
+@@ -241,7 +282,8 @@
+         TextView nameView = createCell(item.getName());
+         nameView.setTextSize(16);
+         TextView detailsView = createCell("Item #: " + item.getId() + "  •  SKU: " + item.getSku()
+-                + "\nQuantity: " + item.getQuantity() + "  •  Status: " + item.getStatus());
++                + "\nQuantity: " + item.getQuantity() + "  •  Status: " + item.getStatus()
++                + "\nMinimum: " + item.getMinimumStock() + "  •  Shortage: " + item.getShortage());
+         row.addView(nameView);
+         row.addView(detailsView);
+         row.setClickable(true);
+@@ -269,9 +311,11 @@
+         itemNameInput.setError(null);
+         itemSkuInput.setError(null);
+         itemQuantityInput.setError(null);
++        minimumStockInput.setError(null);
+         itemNameInput.setText(item.getName());
+         itemSkuInput.setText(item.getSku());
+         itemQuantityInput.setText(String.valueOf(item.getQuantity()));
++        minimumStockInput.setText(String.valueOf(item.getMinimumStock()));
+         itemForm.post(() -> scrollView.smoothScrollTo(0, itemForm.getTop()));
+         Toast.makeText(this, "Editing " + item.getName(), Toast.LENGTH_SHORT).show();
+     }
+@@ -300,15 +344,17 @@
+         itemNameInput.setError(null);
+         itemSkuInput.setError(null);
+         itemQuantityInput.setError(null);
++        minimumStockInput.setError(null);
+         if (selectedRow != null) selectedRow.setBackgroundColor(Color.WHITE);
+         selectedRow = null;
+         itemNameInput.setText("");
+         itemSkuInput.setText("");
+         itemQuantityInput.setText("");
+-    }
+-
+-    private void showSmsResult(String itemName, int quantity) {
+-        String result = smsAlertService.attemptLowStockAlert(itemName, quantity);
++        minimumStockInput.setText("5");
++    }
++
++    private void showSmsResult(String itemName, int quantity, int minimumStock) {
++        String result = smsAlertService.attemptLowStockAlert(itemName, quantity, minimumStock);
+         if (result != null) Toast.makeText(this, result, Toast.LENGTH_LONG).show();
+     }
+ 
+--- milestone_two/app/src/main/java/com/example/nexventory/SmsAlertService.java
++++ enhanced/app/src/main/java/com/example/nexventory/SmsAlertService.java
+@@ -13,8 +13,8 @@
+ 
+     public SmsAlertService(Context context) { this.context = context; }
+ 
+-    public String attemptLowStockAlert(String itemName, int quantity) {
+-        if (quantity > 5) return null;
++    public String attemptLowStockAlert(String itemName, int quantity, int minimumStock) {
++        if (quantity >= minimumStock) return null;
+         SharedPreferences settings = context.getSharedPreferences("notification_preferences", Context.MODE_PRIVATE);
+         if (!settings.getBoolean("sms_enabled", false)) return "Inventory saved. SMS alerts are off.";
+         if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS)
+@@ -23,7 +23,7 @@
+         if (phone == null || phone.trim().isEmpty()) return "Inventory saved. Add an SMS phone number.";
+         try {
+             SmsManager.getDefault().sendTextMessage(phone, null,
+-                    "Nexventory Alert: " + itemName + " is low. Current quantity: " + quantity + ".", null, null);
++                    "Nexventory Alert: " + itemName + " needs restocking. Quantity: " + quantity + "; minimum: " + minimumStock + ".", null, null);
+             return "Inventory saved. SMS send requested; delivery is not confirmed.";
+         } catch (RuntimeException error) {
+             return "Inventory saved, but the SMS request failed.";
+--- milestone_two/app/src/main/res/layout/activity_main.xml
++++ enhanced/app/src/main/res/layout/activity_main.xml
+@@ -92,6 +92,22 @@
+                     android:padding="10dp" />
+             </LinearLayout>
+ 
++            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                android:labelFor="@id/stockFilterSpinner" android:text="Stock filter" />
++            <Spinner android:id="@+id/stockFilterSpinner" android:layout_width="match_parent"
++                android:layout_height="48dp" />
++            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                android:labelFor="@id/sortOrderSpinner" android:text="Sort items by" />
++            <Spinner android:id="@+id/sortOrderSpinner" android:layout_width="match_parent"
++                android:layout_height="48dp" />
++            <Button android:id="@+id/restockButton" android:layout_width="match_parent"
++                android:layout_height="wrap_content" android:text="Show Restock List" />
++            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                android:text="Restock order: out of stock first, then largest shortage. Equal priorities use name and item number."
++                android:layout_marginBottom="12dp" />
++            <TextView android:id="@+id/resultCountText" android:layout_width="match_parent"
++                android:layout_height="wrap_content" android:layout_marginBottom="12dp" />
++
+             <TextView
+                 android:id="@+id/summaryTab"
+                 android:layout_width="180dp"
+@@ -272,6 +288,15 @@
+                     android:inputType="number"
+                     android:padding="10dp" />
+ 
++                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                    android:layout_marginTop="8dp" android:labelFor="@id/minimumStockInput"
++                    android:text="Minimum stock target" />
++                <EditText android:id="@+id/minimumStockInput" android:layout_width="match_parent"
++                    android:layout_height="48dp" android:background="#FFFFFF" android:padding="10dp"
++                    android:inputType="number" android:text="5" android:selectAllOnFocus="true" />
++                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                    android:text="Use 0 for no restock target. At the target, no restocking is needed." />
++
+                 <Button
+                     android:id="@+id/addItemButton"
+                     android:layout_width="match_parent"
+--- milestone_two/app/src/test/java/com/example/nexventory/InventoryAlgorithmsTest.java
++++ enhanced/app/src/test/java/com/example/nexventory/InventoryAlgorithmsTest.java
+@@ -0,0 +1,39 @@
++package com.example.nexventory;
++
++import org.junit.Test;
++import static org.junit.Assert.*;
++import java.util.*;
++
++public class InventoryAlgorithmsTest {
++    @Test public void plannedRestockExampleAndBoundary() {
++        List<InventoryItem> items=Arrays.asList(
++                new InventoryItem(2,"Patch Cable","C",3,10),
++                new InventoryItem(4,"Label Roll","L",12,5),
++                new InventoryItem(1,"Adapter","A",0,4),
++                new InventoryItem(3,"Spare Switch","S",2,3),
++                new InventoryItem(5,"At target","T",5,5),
++                new InventoryItem(6,"No target","N",0,0));
++        List<InventoryItem> result=InventoryAlgorithms.select(items,
++                InventoryAlgorithms.StockFilter.NEEDS_RESTOCK,InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY);
++        assertEquals(3,result.size());
++        assertEquals(1,result.get(0).getId());
++        assertEquals(2,result.get(1).getId());
++        assertEquals(3,result.get(2).getId());
++        assertEquals(2,items.get(0).getId());
++        assertEquals("Good",items.get(4).getStatus());
++        assertFalse(items.get(5).needsRestock());
++        assertEquals("Out",items.get(5).getStatus());
++    }
++    @Test public void tieBreakersAndHeapAgree() {
++        List<InventoryItem> data=Arrays.asList(new InventoryItem(3,"beta","B",1,5),
++                new InventoryItem(2,"ALPHA","A2",1,5),new InventoryItem(1,"alpha","A1",1,5));
++        List<InventoryItem> result=InventoryAlgorithms.restockUsingHeap(data);
++        assertEquals(1,result.get(0).getId());
++        assertEquals(2,result.get(1).getId());
++        assertEquals(3,result.get(2).getId());
++        assertTrue(InventoryAlgorithms.restockUsingHeap(Collections.emptyList()).isEmpty());
++    }
++    @Test(expected=IllegalArgumentException.class) public void overflowingMinimumRejected() {
++        InputRules.minimumStock("2147483648");
++    }
++}
+--- milestone_two/verification/AlgorithmBenchmark.java
++++ enhanced/verification/AlgorithmBenchmark.java
+@@ -0,0 +1,40 @@
++package com.example.nexventory;
++
++import java.util.*;
++
++/** Warmed median elapsed times, not an Android UI or storage benchmark. */
++public final class AlgorithmBenchmark {
++    private static volatile long sink;
++    private static List<InventoryItem> sorted(List<InventoryItem> data) {
++        return InventoryAlgorithms.select(data,InventoryAlgorithms.StockFilter.NEEDS_RESTOCK,
++                InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY);
++    }
++    private static long time(List<InventoryItem> data, boolean heap) {
++        long start=System.nanoTime();
++        List<InventoryItem> result=heap ? InventoryAlgorithms.restockUsingHeap(data) : sorted(data);
++        long elapsed=System.nanoTime()-start;
++        sink += result.size() + (result.isEmpty()?0:result.get(0).getId());
++        return elapsed;
++    }
++    public static void main(String[] args) {
++        System.out.println("Java: " + System.getProperty("java.version") + "; VM: " + System.getProperty("java.vm.name"));
++        System.out.println("OS: " + System.getProperty("os.name") + " " + System.getProperty("os.arch")
++                + "; logical processors: " + Runtime.getRuntime().availableProcessors());
++        System.out.println("Seed 499; quantity/minimum uniform [0,99]; shuffled input; 12 warmups; median of 21 alternating trials.");
++        System.out.println("n,k,sorted_list_median_ms,heap_drain_median_ms");
++        for(int size:new int[]{100,1000,10000,100000}) {
++            Random random=new Random(499);
++            List<InventoryItem> data=new ArrayList<>();
++            for(int i=0;i<size;i++) data.add(new InventoryItem(i,"Part " + i,"SKU-"+i,random.nextInt(100),random.nextInt(100)));
++            Collections.shuffle(data,random);
++            for(int i=0;i<12;i++) {time(data,false);time(data,true);}
++            long[] a=new long[21], b=new long[21];
++            for(int i=0;i<21;i++) {
++                if(i%2==0) {a[i]=time(data,false);b[i]=time(data,true);}
++                else {b[i]=time(data,true);a[i]=time(data,false);}
++            }
++            Arrays.sort(a);Arrays.sort(b);
++            System.out.printf(Locale.ROOT,"%d,%d,%.4f,%.4f%n",size,sorted(data).size(),a[10]/1e6,b[10]/1e6);
++        }
++    }
++}
+--- milestone_two/verification/AlgorithmChecks.java
++++ enhanced/verification/AlgorithmChecks.java
+@@ -0,0 +1,83 @@
++package com.example.nexventory;
++
++import java.util.*;
++
++/** Dependency-free executable regression tests. Throws on any failure. */
++public final class AlgorithmChecks {
++    private static int checks;
++    private static InventoryItem item(int id, String name, int qty, int min) {
++        return new InventoryItem(id, name, "SKU-" + id, qty, min);
++    }
++    private static void check(boolean condition, String message) {
++        checks++;
++        if (!condition) throw new AssertionError(message);
++    }
++    private static void ids(List<InventoryItem> actual, int... expected) {
++        check(actual.size() == expected.length, "Result size");
++        for (int i = 0; i < expected.length; i++) check(actual.get(i).getId() == expected[i], "Order at " + i);
++    }
++    private static List<InventoryItem> restock(List<InventoryItem> items) {
++        return InventoryAlgorithms.select(items, InventoryAlgorithms.StockFilter.NEEDS_RESTOCK,
++                InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY);
++    }
++    public static void main(String[] args) {
++        ids(restock(Collections.emptyList()));
++        List<InventoryItem> planned = Arrays.asList(item(4,"Label Roll",12,5), item(3,"Spare Switch",2,3),
++                item(2,"Patch Cable",3,10), item(1,"Adapter",0,4));
++        ids(restock(planned),1,2,3);
++        ids(planned,4,3,2,1); // Sorting must not change the caller's list.
++        check(planned.get(2).getShortage()==7,"Shortage");
++        ids(restock(Arrays.asList(item(1,"At target",5,5),item(2,"No target",0,0),item(3,"Above",6,5))));
++        check(item(1,"At target",5,5).getStatus().equals("Good"),"Exact minimum is good");
++        check(item(1,"Low",4,5).getStatus().equals("Low"),"Below minimum is low");
++        check(item(1,"Out without target",0,0).getStatus().equals("Out"),"Physical out differs from reorder");
++        ids(restock(Arrays.asList(item(9,"beta",1,6),item(5,"ALPHA",1,6),item(2,"alpha",1,6))),2,5,9);
++        ids(restock(Arrays.asList(item(1,"Huge shortage",1,Integer.MAX_VALUE),item(2,"Out",0,1))),2,1);
++        check(item(1,"Maximum",0,Integer.MAX_VALUE).getShortage()==Integer.MAX_VALUE,"Maximum shortage");
++        check(item(1,"No overflow",Integer.MAX_VALUE,0).getShortage()==0,"No overflow");
++        check(InputRules.minimumStock("0")==0,"Zero minimum valid");
++        check(InputRules.minimumStock("2147483647")==Integer.MAX_VALUE,"Largest minimum valid");
++        for(String value:new String[]{null,"","-1","1.5","2147483648","nope"}) {
++            boolean rejected=false;
++            try { InputRules.minimumStock(value); } catch(IllegalArgumentException e) { rejected=true; }
++            check(rejected,"Reject invalid minimum " + value);
++        }
++        boolean rejected=false;
++        try { item(1,"Bad",-1,5); } catch(IllegalArgumentException e) { rejected=true; }
++        check(rejected,"Model rejects negative quantity");
++        rejected=false;
++        try { item(1,"Bad",1,-5); } catch(IllegalArgumentException e) { rejected=true; }
++        check(rejected,"Model rejects negative minimum");
++        List<InventoryItem> mixed=Arrays.asList(item(1,"z",0,0),item(2,"b",1,5),item(3,"a",5,5),item(4,"c",0,4));
++        ids(InventoryAlgorithms.select(mixed,InventoryAlgorithms.StockFilter.OUT,InventoryAlgorithms.SortOrder.NAME),4,1);
++        ids(InventoryAlgorithms.select(mixed,InventoryAlgorithms.StockFilter.LOW,InventoryAlgorithms.SortOrder.NAME),2);
++        ids(InventoryAlgorithms.select(mixed,InventoryAlgorithms.StockFilter.GOOD,InventoryAlgorithms.SortOrder.NAME),3);
++        ids(InventoryAlgorithms.select(mixed,InventoryAlgorithms.StockFilter.ALL,InventoryAlgorithms.SortOrder.QUANTITY),4,1,2,3);
++        ids(InventoryAlgorithms.select(mixed,InventoryAlgorithms.StockFilter.ALL,InventoryAlgorithms.SortOrder.RESTOCK_PRIORITY),4,2,3,1);
++        Random random=new Random(499);
++        for(int trial=0;trial<100;trial++) {
++            List<InventoryItem> data=new ArrayList<>();
++            for(int i=0;i<200;i++) data.add(item(i,"Part " + random.nextInt(10),random.nextInt(20),random.nextInt(20)));
++            List<InventoryItem> sorted=restock(data), heap=InventoryAlgorithms.restockUsingHeap(data);
++            check(sorted.size()==heap.size(),"Heap equivalence size");
++            Set<Integer> selected=new HashSet<>();
++            for(int i=0;i<sorted.size();i++) {
++                InventoryItem a=sorted.get(i);
++                check(a.needsRestock(),"Only eligible records");
++                check(selected.add(a.getId()),"Unique results");
++                check(a.getId()==heap.get(i).getId(),"Heap order equivalence");
++                if(i>0) check(InventoryAlgorithms.BY_RESTOCK_PRIORITY.compare(sorted.get(i-1),a)<=0,"Monotonic priority");
++            }
++            Collections.shuffle(data,random);
++            List<InventoryItem> shuffled=restock(data);
++            for(int i=0;i<sorted.size();i++) check(sorted.get(i).getId()==shuffled.get(i).getId(),"Deterministic across input order");
++            for(int i=0;i<100;i++) {
++                InventoryItem a=data.get(random.nextInt(200)), b=data.get(random.nextInt(200)), c=data.get(random.nextInt(200));
++                Comparator<InventoryItem> cmp=InventoryAlgorithms.BY_RESTOCK_PRIORITY;
++                check(Integer.signum(cmp.compare(a,b))==-Integer.signum(cmp.compare(b,a)),"Comparator symmetry");
++                if(cmp.compare(a,b)<=0 && cmp.compare(b,c)<=0) check(cmp.compare(a,c)<=0,"Comparator transitivity");
++            }
++        }
++        System.out.println("PASS: " + checks + " assertions; planned example, boundaries, filters, sorting, input, 100 randomized datasets.");
++    }
++}
+--- milestone_two/verification/check_sql.py
++++ enhanced/verification/check_sql.py
+@@ -0,0 +1,44 @@
++"""Exercise SQL extracted from DatabaseHelper in desktop SQLite, not Android."""
++from pathlib import Path
++import re
++import sqlite3
++import xml.etree.ElementTree as ET
++
++root=Path(__file__).resolve().parents[1]
++source=(root/'app/src/main/java/com/example/nexventory/DatabaseHelper.java').read_text()
++def sql_expression(expr):
++    # All execSQL expressions here are string literals and two constant table names.
++    expr=expr.replace('TABLE_USERS','"users"').replace('TABLE_INVENTORY','"inventory"')
++    return ''.join(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',expr))
++statements=[sql_expression(x) for x in re.findall(r'db\.execSQL\((.*?)\);',source,re.S)]
++create_users,create_inventory,upgrade=statements
++db=sqlite3.connect(':memory:')
++db.execute(create_users)
++db.execute('CREATE TABLE inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sku TEXT UNIQUE NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0))')
++db.execute("INSERT INTO users(username,password) VALUES ('migration-test','unchanged-hash')")
++db.execute("INSERT INTO inventory(name,sku,quantity) VALUES ('Existing cable','OLD',5)")
++db.execute(upgrade)
++assert db.execute('SELECT id,name,sku,quantity,minimum_stock FROM inventory').fetchone()==(1,'Existing cable','OLD',5,5)
++assert db.execute('SELECT password FROM users').fetchone()==('unchanged-hash',)
++for connection in [db,sqlite3.connect(':memory:')]:
++    if connection is not db: connection.execute(create_inventory)
++    for value in [-1,None]:
++        try:
++            connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Invalid',str(value),1,value))
++        except sqlite3.IntegrityError: pass
++        else: raise AssertionError('Minimum constraint missing')
++    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Adapter','A',0,4))
++    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Patch Cable','C',3,10))
++    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('No target','N',0,0))
++    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('At target','T',5,5))
++    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity < minimum_stock').fetchone()[0]==2
++    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND quantity < minimum_stock').fetchone()[0]==1
++    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity = 0').fetchone()[0]==2
++    connection.execute('UPDATE inventory SET minimum_stock=0 WHERE sku="C"')
++    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity < minimum_stock').fetchone()[0]==1
++    connection.close()
++count=0
++for xml in (root/'app/src').rglob('*.xml'):
++    ET.parse(xml); count+=1
++print(f'PASS: desktop SQLite {sqlite3.sqlite_version} checked exact CREATE/ALTER statements from source, v2 preservation, fresh schema, constraints, counts and target edits; {count} XML resources parsed.')
++print('Android SQLiteOpenHelper and emulator workflows require the separate instrumentation/manual checks.')
+--- milestone_two/verification/run-checks.ps1
++++ enhanced/verification/run-checks.ps1
+@@ -0,0 +1,12 @@
++param([string]$JdkBin = "$env:JAVA_HOME\bin")
++$ErrorActionPreference = 'Stop'
++$root = Split-Path -Parent $PSScriptRoot
++$classes = Join-Path $root 'build\algorithm-checks'
++New-Item -ItemType Directory -Path $classes -Force | Out-Null
++$src = Join-Path $root 'app\src\main\java\com\example\nexventory'
++& "$JdkBin\javac.exe" --release 11 -d $classes "$src\InventoryItem.java" "$src\InventoryAlgorithms.java" "$src\InputRules.java" "$PSScriptRoot\AlgorithmChecks.java" "$PSScriptRoot\AlgorithmBenchmark.java"
++if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
++& "$JdkBin\java.exe" -cp $classes com.example.nexventory.AlgorithmChecks
++if ($LASTEXITCODE -ne 0) { throw 'Regression checks failed' }
++& "$JdkBin\java.exe" -cp $classes com.example.nexventory.AlgorithmBenchmark
++if ($LASTEXITCODE -ne 0) { throw 'Benchmark failed' }
