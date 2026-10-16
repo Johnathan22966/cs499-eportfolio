@@ -16,6 +16,7 @@ public class RestockDatabaseTest {
         Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();
         final File file=new File(target.getCacheDir(),"restock-test-"+System.nanoTime()+".db");
         return new ContextWrapper(target) {
+            @Override public Context getApplicationContext() { return this; }
             @Override public File getDatabasePath(String name) { return file; }
             @Override public SQLiteDatabase openOrCreateDatabase(String name,int mode,SQLiteDatabase.CursorFactory factory) {
                 return SQLiteDatabase.openOrCreateDatabase(file,factory);
@@ -36,7 +37,7 @@ public class RestockDatabaseTest {
                 old.execSQL("INSERT INTO inventory(name,sku,quantity) VALUES ('Cable','OLD',3)");
                 old.setVersion(2);
             }
-            try(DatabaseHelper helper=new DatabaseHelper(context)) {
+            try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
                 assertTrue(helper.validateUser("tester","test-only-pass"));
                 InventoryItem old=helper.getAllInventoryItems().get(0);
                 assertEquals(1,old.getId()); assertEquals(3,old.getQuantity()); assertEquals(5,old.getMinimumStock());
@@ -47,7 +48,7 @@ public class RestockDatabaseTest {
                 assertEquals(1,helper.getLowStockCount());
                 assertEquals(1,helper.getOutOfStockCount());
             }
-            try(DatabaseHelper reopened=new DatabaseHelper(context)) {
+            try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
                 assertEquals(10,reopened.searchInventoryItems("OLD",SearchMode.SKU).get(0).getMinimumStock());
                 assertEquals(2,reopened.getTotalItems());
             }
@@ -55,7 +56,7 @@ public class RestockDatabaseTest {
     }
     @Test public void freshDatabaseSearchAndRestockFiltersCompose() {
         Context context=isolatedContext();
-        try(DatabaseHelper helper=new DatabaseHelper(context)) {
+        try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
             assertTrue(helper.addInventoryItem("Adapter","A",0,4));
             assertTrue(helper.addInventoryItem("Patch Cable","C",3,10));
             assertTrue(helper.addInventoryItem("Spare Switch","S",2,3));

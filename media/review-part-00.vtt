@@ -1,0 +1,463 @@
+WEBVTT
+
+00:00:00.270 --> 00:00:07.390
+Hello, my name is Johnathan Roehsner, in this video, I am reviewing Nexventory, the Android
+
+00:00:07.390 --> 00:00:12.350
+Inventory Application I originally developed in CS360.
+
+00:00:12.350 --> 00:00:19.190
+I'm using this artifact from my CS499 capstone, because it gives me a foundation for demonstrating
+
+00:00:19.190 --> 00:00:25.550
+software design and engineering algorithms and data structures, as well as databases
+
+00:00:25.550 --> 00:00:28.950
+and one connected project.
+
+00:00:28.950 --> 00:00:36.510
+The purpose of this review is to explain how original code works, identify specific weaknesses
+
+00:00:36.510 --> 00:00:41.390
+and limitations, and describe the enhancement I plan to make.
+
+00:00:41.390 --> 00:00:46.870
+I will move through each category in that order, existing functionality, code analysis,
+
+00:00:46.870 --> 00:00:48.710
+and plan enhancement.
+
+00:00:48.710 --> 00:00:53.550
+This version already contains more than a visual interface.
+
+00:00:53.550 --> 00:01:02.070
+This includes account creation and login code, ASQL Lite database, inventory create,
+
+00:01:02.070 --> 00:01:09.750
+read, update, and delete operations, as well as low stock SMS logic.
+
+00:01:09.750 --> 00:01:12.550
+My enhancements will build on those features.
+
+00:01:12.550 --> 00:01:18.070
+I will be careful to distinguish a feature that already exists from one that is incomplete
+
+00:01:18.070 --> 00:01:19.910
+or still planned.
+
+00:01:19.910 --> 00:01:26.270
+For example, the app displays a search field, but that does not mean inventory searching
+
+00:01:26.270 --> 00:01:32.830
+has been implemented, likewise having a login screen does not mean the handling of account
+
+00:01:32.830 --> 00:01:36.590
+information is sufficient and secure.
+
+00:01:36.590 --> 00:01:41.430
+Those are distinctions I will explain using the actual methods.
+
+00:01:41.430 --> 00:01:48.910
+My intended use case is tracking networking equipment and technical supplies.
+
+00:01:48.910 --> 00:01:55.430
+So after I joined the military, I noticed that the supply chain was pretty poorly ran,
+
+00:01:55.430 --> 00:02:00.630
+so when I got out and got into computer science, I figured that would be a cool application
+
+00:02:00.630 --> 00:02:02.630
+to kind of implement.
+
+00:02:02.630 --> 00:02:09.710
+In addition to technical supplies, we could bring in things like cables, adapters, and
+
+00:02:09.710 --> 00:02:14.230
+potentially like replacement equipment as well.
+
+00:02:14.230 --> 00:02:20.790
+So one of the big important things for this project specifically is from the start, I have
+
+00:02:20.790 --> 00:02:28.550
+a zip backup of the project so I can kind of preserve that initial starting point to compare
+
+00:02:28.550 --> 00:02:37.030
+with later improvements as well as the baseline for the code comparison.
+
+00:02:37.030 --> 00:02:43.490
+Okay, so the first thing we're going to do is we're going to go over to that login activity
+
+00:02:43.490 --> 00:02:59.380
+dot Java, and let's see here, right here specifically, I'll start with software design
+
+00:02:59.380 --> 00:03:04.740
+and engineering, the project separates its main screens into activity classes.
+
+00:03:04.740 --> 00:03:10.780
+Login activity handles account access, home activity displays the inventory summary and
+
+00:03:10.780 --> 00:03:18.620
+navigation buttons, then main activity contains the inventory screen and notification activity
+
+00:03:18.620 --> 00:03:21.380
+handles the SMS setting screen.
+
+00:03:21.380 --> 00:03:28.260
+Database helper contains the SQL life operations, while inventory item represents one inventory
+
+00:03:28.260 --> 00:03:38.500
+record and login activity dot Java, which we're in up here, login user reads the username
+
+00:03:38.500 --> 00:03:47.880
+and password, checks whether either is empty and calls validate user and database helper.
+
+00:03:47.880 --> 00:03:55.800
+If the database finds a matching record, the activity opens the home screen.
+
+00:03:55.800 --> 00:04:02.560
+The create account method also checks the inputs and calls create user to insert a new account.
+
+00:04:02.560 --> 00:04:09.240
+Therefore, registration and login are already implemented in the original code.
+
+00:04:09.240 --> 00:04:19.100
+Next we'll move over to homeactivity dot Java, home activity connects its buttons to the inventory
+
+00:04:19.220 --> 00:04:21.060
+landscape notification screens.
+
+00:04:21.060 --> 00:04:28.140
+It is own resume method refreshes three summary values total inventory records, low stock records
+
+00:04:28.140 --> 00:04:31.660
+and out of stock records.
+
+00:04:31.660 --> 00:04:36.300
+Home activity connects its buttons to the inventory and notification screens.
+
+00:04:36.300 --> 00:04:41.500
+Its own resume method refreshes three summary values, total inventory records, low stock
+
+00:04:41.500 --> 00:04:43.740
+records, and out of stock records.
+
+00:04:43.740 --> 00:04:51.500
+refreshing its own resume is useful because the user may are trying to change their inventory
+
+00:04:51.500 --> 00:04:55.220
+based on what they have in stock.
+
+00:04:55.220 --> 00:05:05.510
+Next thing we will go into is the mainactivity.java and we'll scroll down to the deeper areas
+
+00:05:05.510 --> 00:05:08.230
+down here.
+
+00:05:08.230 --> 00:05:12.590
+So the main activity already has methods for adding and updating inventory.
+
+00:05:12.590 --> 00:05:20.890
+Each row also receives edit and delete buttons.
+
+00:05:20.890 --> 00:05:28.690
+Select edit calls, selecting item for editing which remembers the records ID, selected item
+
+00:05:28.690 --> 00:05:33.370
+ID and copies its values into the input fields.
+
+00:05:33.370 --> 00:05:37.730
+Updates then uses the ID to identify the record to change.
+
+00:05:37.730 --> 00:05:45.080
+The initial value of negative 1 means that no item is selected.
+
+00:05:45.080 --> 00:05:46.600
+Here is a successful operation.
+
+00:05:46.600 --> 00:05:50.840
+The activity clears the inputs and reloads the inventory grid.
+
+00:05:50.840 --> 00:05:55.320
+This is a working design in the source but it combines several responsibilities in one
+
+00:05:55.320 --> 00:05:56.880
+class.
+
+00:05:56.880 --> 00:06:04.120
+The same activity builds rows, reads and validates input calls, the database, updates summary
+
+00:06:04.120 --> 00:06:11.080
+labels, navigates between screens and attempts to send SMS alerts.
+
+00:06:11.080 --> 00:06:17.360
+The concentration of responsibilities is one of the main things that I plan to improve.
+
+00:06:17.360 --> 00:06:28.410
+So the first issue is input validation, not going to be mainactivity.java.
+
+00:06:28.410 --> 00:06:35.490
+So the first issue is input validation, the method is inventory input valid, checks only
+
+00:06:35.490 --> 00:06:40.410
+whether the name SKU and quantity text are empty.
+
+00:06:40.410 --> 00:06:46.370
+It does not check whether the quantity fits the supported integer range, and specifically
+
+00:06:46.370 --> 00:06:54.740
+we're looking at this right here.
+
+00:06:54.740 --> 00:07:02.660
+Both add and update then call integer.parcelent without catching a conversion failure.
+
+00:07:02.660 --> 00:07:08.940
+A very long number can pass the empty field check but failed during parsing.
+
+00:07:08.940 --> 00:07:15.380
+The numeric keyboard setting in the layout helps guide ordinary input, it does not replace
+
+00:07:15.380 --> 00:07:18.460
+validation in the application.
+
+00:07:18.460 --> 00:07:27.060
+The code also needs an explicit rule against the navigative quantities where every records
+
+00:07:27.060 --> 00:07:31.900
+can enter the system including feature imports.
+
+00:07:31.900 --> 00:07:37.940
+There is a related error handling issue when inventory insert returns false, the interface
+
+00:07:37.940 --> 00:07:41.100
+always says the SKU already exists.
+
+00:07:41.100 --> 00:07:48.660
+When account creation fails, the interface always says the username already exists.
+
+00:07:48.660 --> 00:07:54.540
+Those are possible causes but the return values do not prove that duplication cause the
+
+00:07:54.540 --> 00:07:55.540
+failure.
+
+00:07:55.540 --> 00:08:01.580
+A more reliable design would distinguish invalid input, duplicate records, and other storage
+
+00:08:01.580 --> 00:08:03.580
+failures.
+
+00:08:03.580 --> 00:08:11.940
+Next we'll jump into the notification screen, so we'll go up to notification activity and
+
+00:08:11.940 --> 00:08:15.620
+then we will scroll down.
+
+00:08:15.620 --> 00:08:21.630
+Specifically 56 and 57 right here.
+
+00:08:21.630 --> 00:08:32.380
+The notification screen contains another concrete problem, the listener for the deny SMS permission,
+
+00:08:32.380 --> 00:08:40.060
+total button only changes the status text, it does not revoke operating system permission
+
+00:08:40.060 --> 00:08:47.140
+or save an application preference that disables alerts.
+
+00:08:47.140 --> 00:08:53.340
+Next we'll go back into mainactivity.java, it's going to be up here and we'll scroll
+
+00:08:53.340 --> 00:08:57.310
+down a little bit.
+
+00:08:57.310 --> 00:09:10.170
+So if we look at from here to about here, we're looking at the mainactivity.java and
+
+00:09:10.170 --> 00:09:17.810
+the checks of the actual operating system permissions in a saved phone number.
+
+00:09:17.810 --> 00:09:24.410
+This logic does not check the text on the screen as a result.
+
+00:09:24.410 --> 00:09:29.210
+The interface can say alerts are disabled while the send conditions will still allow
+
+00:09:29.210 --> 00:09:31.010
+them.
+
+00:09:31.010 --> 00:09:39.090
+The SMS method also shows a success message immediately after calling the send text message.
+
+00:09:39.090 --> 00:09:45.930
+The code does not provide callbacks to confirm sending or delivery and it does not handle exceptions
+
+00:09:45.930 --> 00:09:47.970
+around that call.
+
+00:09:47.970 --> 00:09:54.130
+I would separate saving and inventory record from reporting the outcome of an alert.
+
+00:09:54.130 --> 00:10:00.390
+A saved record and a delivered text message are different results.
+
+00:10:00.390 --> 00:10:06.310
+There are smaller usability issues as well, delete acts immediately without confirmation
+
+00:10:06.310 --> 00:10:10.270
+and a failed delete has no feedback in this method.
+
+00:10:10.270 --> 00:10:16.990
+Selecting an item for editing does not explicitly scroll the form into view.
+
+00:10:16.990 --> 00:10:23.230
+Create navigation starts new activities so I would test the back button behavior instead
+
+00:10:23.230 --> 00:10:27.470
+of assuming it is intuitive.
+
+00:10:27.470 --> 00:10:33.470
+Heartcode strings appear throughout the java and layout files which makes consistent wording
+
+00:10:33.470 --> 00:10:35.990
+and the localization harder.
+
+00:10:35.990 --> 00:10:40.990
+Finally, the existing automated tests are start examples.
+
+00:10:40.990 --> 00:10:46.310
+Information checks that 2 plus 2 equals 4 and the other checks the application package
+
+00:10:46.310 --> 00:10:47.310
+name.
+
+00:10:47.310 --> 00:10:54.030
+They do not exercise account handling, inventory validation, updates or notification behavior.
+
+00:10:54.030 --> 00:10:59.590
+That means the important application rules still need meaningful test coverage.
+
+00:10:59.590 --> 00:11:05.630
+For documentation and variables, the short comments generally match their code and names
+
+00:11:05.630 --> 00:11:10.910
+such as selected item ID and database helper explain their purpose.
+
+00:11:10.910 --> 00:11:18.070
+However, the comments do not adequately describe validation contracts, migration risks or shared
+
+00:11:18.070 --> 00:11:19.990
+inventory assumptions.
+
+00:11:19.990 --> 00:11:29.670
+Formatting is responsible for consistent inspections.
+
+00:11:29.670 --> 00:11:34.550
+Formal coding standard compliance still needs a link check.
+
+00:11:34.550 --> 00:11:41.670
+I did not identify an obviously unused application, variable or unreachable method in this review.
+
+00:11:41.670 --> 00:11:49.220
+The start tests and unfinished search behavior are the clearer findings.
+
+00:11:49.220 --> 00:11:59.140
+So for this next part, let's take a look at the logic for our tree over here.
+
+00:11:59.140 --> 00:12:08.180
+For this, I'm going to make some of the existing workflows more reliable and easier to maintain.
+
+00:12:08.180 --> 00:12:14.420
+I will separate stream behavior from validation, inventory rules and persistence.
+
+00:12:14.420 --> 00:12:19.780
+A repository can provide a consistent way to access inventory while a smaller validation
+
+00:12:19.780 --> 00:12:24.820
+and business rule classes can be tested without driving the entire Android interface.
+
+00:12:24.820 --> 00:12:33.500
+I will make quantity validation checks required input numeric conversions, the supported range
+
+00:12:33.500 --> 00:12:36.660
+and the rule that quantities cannot be negative.
+
+00:12:36.660 --> 00:12:43.580
+The result should identify the field and explain what the user needs to correct.
+
+00:12:43.580 --> 00:12:51.180
+Both add and update should use the same validation so their behavior stays consistent.
+
+00:12:51.180 --> 00:12:54.340
+Account handling also needs improvement.
+
+00:12:54.340 --> 00:12:58.700
+The original code stores passwords directly in a text column.
+
+00:12:58.700 --> 00:13:04.700
+My plan is to replace plain text password storage with a suitable salted password hashing
+
+00:13:04.700 --> 00:13:09.620
+approach and define how existing accounts will transition.
+
+00:13:09.620 --> 00:13:15.380
+I will also review the current trimming of password input so the app does not silently
+
+00:13:15.380 --> 00:13:18.540
+change a user's intended password.
+
+00:13:18.540 --> 00:13:23.780
+I will discuss the database side of that issue later in the review.
+
+00:13:23.780 --> 00:13:32.100
+For SMS settings, I plan to represent the user's alert preference, and check it before attempting
+
+00:13:32.100 --> 00:13:33.740
+to send.
+
+00:13:33.740 --> 00:13:38.540
+Operating system permission and the user's preference inside the app should be treated
+
+00:13:38.540 --> 00:13:40.180
+as separate conditions.
+
+00:13:40.180 --> 00:13:47.180
+I will also make error reporting reflect what the application actually knows about the send
+
+00:13:47.180 --> 00:13:49.300
+attempt.
+
+00:13:49.300 --> 00:13:57.890
+Testing will focus on behavior, rejecting an overflow, quantity without crashing, preventing
+
+00:13:57.890 --> 00:14:06.210
+an update when no item is selected, preserving a record when deletion is cancelled, and suppressing
+
+00:14:06.210 --> 00:14:09.050
+an alert when the user disables it.
+
+00:14:09.050 --> 00:14:15.250
+I will also test normal operations so the fixes do not break the workflows that already
+
+00:14:15.250 --> 00:14:17.530
+exist.
+
+00:14:17.530 --> 00:14:24.610
+These changes will demonstrate software engineering through separation of concerns, defensive programming,
+
+00:14:24.610 --> 00:14:28.730
+maintainable design and evidence from tests.
+
+00:14:28.730 --> 00:14:34.010
+Explaining the original issue, the design decision and the result will also support clear
+
+00:14:34.010 --> 00:14:36.170
+technical communication.
+
+00:14:36.170 --> 00:14:49.230
+My goal is a codebase where a change to support a storage detail or a notification rule does
+
+00:14:49.230 --> 00:14:54.630
+not require rewriting the inventory screen.
+
+00:14:54.630 --> 00:15:00.020
+Next we will go back into our inventory item.java and now that we are here, let's look

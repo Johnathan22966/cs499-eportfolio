@@ -6,12 +6,16 @@ public class InventoryItem {
     private final String sku;
     private final int quantity;
     private final int minimumStock;
+    private final String category, location;
 
     public InventoryItem(int id, String name, String sku, int quantity) {
         this(id, name, sku, quantity, 5);
     }
 
     public InventoryItem(int id, String name, String sku, int quantity, int minimumStock) {
+        this(id,name,sku,quantity,minimumStock,"","");
+    }
+    public InventoryItem(int id,String name,String sku,int quantity,int minimumStock,String category,String location) {
         if (quantity < 0 || minimumStock < 0) throw new IllegalArgumentException("Stock values cannot be negative");
         if (name == null || sku == null) throw new IllegalArgumentException("Name and SKU are required");
         this.minimumStock = minimumStock;
@@ -19,7 +23,12 @@ public class InventoryItem {
         this.name = name;
         this.sku = sku;
         this.quantity = quantity;
+        this.category = category == null ? "" : category;
+        this.location = location == null ? "" : location;
     }
+
+    public String getCategory() { return category; }
+    public String getLocation() { return location; }
 
     public int getId() {
         return id;

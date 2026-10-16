@@ -197,6 +197,10 @@
                     android:text="No matching items"
                     android:visibility="gone" />
 
+                <Button android:id="@+id/importCsvButton" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:text="Import Inventory CSV" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="CSV columns: name, sku, quantity, minimum_stock, category, location. Category and location are optional. Use new SKUs only." />
                 <Button
                     android:id="@+id/loadSamplesButton"
                     android:layout_width="match_parent"
@@ -297,6 +301,14 @@
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:text="Use 0 for no restock target. At the target, no restocking is needed." />
 
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:labelFor="@id/categoryInput" android:text="Category (optional)" />
+                <EditText android:id="@+id/categoryInput" android:layout_width="match_parent"
+                    android:layout_height="48dp" android:inputType="text" android:hint="For example, cables" android:background="#FFFFFF" android:padding="10dp" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:labelFor="@id/locationInput" android:text="Location (optional)" />
+                <EditText android:id="@+id/locationInput" android:layout_width="match_parent"
+                    android:layout_height="48dp" android:inputType="text" android:hint="For example, rack A" android:background="#FFFFFF" android:padding="10dp" />
                 <Button
                     android:id="@+id/addItemButton"
                     android:layout_width="match_parent"

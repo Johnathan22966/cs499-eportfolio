@@ -10,6 +10,7 @@ import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
 
 public class LoginActivity extends AppCompatActivity {
+    private boolean signingIn;
     private DatabaseHelper databaseHelper;
     private SessionManager sessionManager;
     private EditText usernameInput;
@@ -38,37 +39,29 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void loginUser() {
+        if (signingIn) return;
         String username = usernameInput.getText().toString().trim();
         String password = passwordInput.getText().toString();
-
-        if (!isInputValid(username, password)) {
-            return;
-        }
-
-        // Login only succeeds when the username and password match the database record.
-        if (databaseHelper.validateUser(username, password)) {
-            Toast.makeText(this, "Login successful", Toast.LENGTH_SHORT).show();
-            openHomeScreen();
-        } else {
-            Toast.makeText(this, "Invalid username or password", Toast.LENGTH_SHORT).show();
-        }
+        if (!isInputValid(username,password)) return;
+        signingIn=true;
+        DatabaseTasks.run(this, () -> databaseHelper.validateUser(username,password), accepted -> {
+            signingIn=false;
+            if (accepted) openHomeScreen();
+            else Toast.makeText(this,"Invalid username or password",Toast.LENGTH_LONG).show();
+        }, message -> {signingIn=false;Toast.makeText(this,message,Toast.LENGTH_LONG).show();});
     }
 
     private void createAccount() {
+        if (signingIn) return;
         String username = usernameInput.getText().toString().trim();
         String password = passwordInput.getText().toString();
-
-        if (!isInputValid(username, password)) {
-            return;
-        }
-
-        // New users are saved to SQLite so the account remains available later.
-        if (databaseHelper.createUser(username, password)) {
-            Toast.makeText(this, "Account created. You are now logged in.", Toast.LENGTH_SHORT).show();
-            openHomeScreen();
-        } else {
-            Toast.makeText(this, "Username already exists. Choose another username.", Toast.LENGTH_SHORT).show();
-        }
+        if (!isInputValid(username,password)) return;
+        signingIn=true;
+        DatabaseTasks.run(this, () -> databaseHelper.createUser(username,password), accepted -> {
+            signingIn=false;
+            if (accepted) openHomeScreen();
+            else Toast.makeText(this,"Username already exists or account could not be saved.",Toast.LENGTH_LONG).show();
+        }, message -> {signingIn=false;Toast.makeText(this,message,Toast.LENGTH_LONG).show();});
     }
 
     private boolean isInputValid(String username, String password) {
