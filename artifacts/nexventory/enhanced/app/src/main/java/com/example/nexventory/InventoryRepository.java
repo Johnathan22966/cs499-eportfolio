@@ -19,6 +19,13 @@ public final class InventoryRepository {
         return database.updateInventoryItem(id, name, sku, quantity, minimumStock);
     }
 
+    public boolean add(String n,String s,int q,int m,String c,String l) {
+        return database.addInventoryItem(n,s,q,m,c,l);
+    }
+    public boolean update(int id,String n,String s,int q,int m,String c,String l) {
+        return database.updateInventoryItem(id,n,s,q,m,c,l);
+    }
+    public int importCsv(java.io.Reader reader) throws java.io.IOException {return database.importCsv(reader);}
     public boolean delete(int id) { return database.deleteInventoryItem(id); }
     public int addSampleInventory() { return database.addSampleInventory(); }
     public int removeSampleInventory() { return database.removeSampleInventory(); }

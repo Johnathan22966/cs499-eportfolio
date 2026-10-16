@@ -39,8 +39,11 @@ public class HomeActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        totalItemsHomeText.setText("Total Items: " + inventoryRepository.total());
-        lowStockHomeText.setText("Low Stock: " + inventoryRepository.lowStock());
-        outOfStockHomeText.setText("Out of Stock: " + inventoryRepository.outOfStock());
+        if (inventoryRepository == null) return;
+        DatabaseTasks.run(this, () -> new int[]{inventoryRepository.total(),inventoryRepository.lowStock(),inventoryRepository.outOfStock()}, counts -> {
+            totalItemsHomeText.setText("Total Items: " + counts[0]);
+            lowStockHomeText.setText("Low Stock: " + counts[1]);
+            outOfStockHomeText.setText("Out of Stock: " + counts[2]);
+        });
     }
 }
