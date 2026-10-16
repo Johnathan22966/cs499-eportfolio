@@ -1,0 +1,62 @@
+# Nexventory database enhancement
+
+Author: Johnathan Roehsner. CS 499 Milestone Four, October 3, 2026.
+
+## What changed
+
+- Room 2.8.5 now manages SQLite storage. InventoryRecord and UserRecord describe the tables; InventoryDao and UserDao define operations. DatabaseHelper keeps the existing screen/repository boundary while using those DAOs.
+- Database version 4 has explicit migration paths from versions 1, 2 and 3. Existing IDs, stock, names, SKUs, accounts and sequence high-water marks are preserved. Versions before 3 receive minimum 5; category/location start blank. Version 1 passwords are converted with the inherited salted password hasher. No destructive fallback is enabled.
+- Category and location can be saved, edited and displayed.
+- The Android file picker supplies a UTF-8 CSV. Four columns are required, in this order: name,sku,quantity,minimum_stock. An optional extended header adds category,location. With that header, each row must have all six fields; optional values may be empty.
+- Imports reject duplicates within the file and against saved inventory. SKU identity remains case-sensitive, matching the earlier schema. Whitespace around values is trimmed. Existing items are never silently overwritten.
+- The importer supports quoted commas, doubled quotes and embedded line breaks. It limits input to 1 MiB (1,048,576 bytes in the screen), 1,048,576 decoded characters, 1,000 data rows and 512 characters per field. Quantity and minimum must be nonnegative 32-bit integers.
+- Database triggers guard integer stock values and nonempty names/SKUs on raw writes. Room unique indexes protect usernames and SKUs. Query values use bound parameters.
+- Database and password operations run on a serial background executor. A generation counter rejects outdated search results; UI callbacks are ignored when the screen has closed.
+
+## Import pseudocode
+
+```text
+User selects a CSV and confirms Import
+Open a bounded UTF-8 stream
+Read and parse quoted CSV fields
+Validate the header, every row, field lengths and file limits
+Reject duplicate SKUs inside the file
+Begin a database transaction
+    Check every SKU against saved inventory
+    If any exists, stop and roll back
+    Insert all validated records
+    If any insert fails, roll back the entire batch
+Commit only when every row succeeds
+Close the stream and show the count, or show the error
+```
+
+## Upgrade pseudocode
+
+```text
+Room begins the upgrade transaction
+If starting at version 1, hash the old account passwords
+Remember the highest assigned inventory and account IDs
+Check existing stock for invalid negative values
+Create tables that match Room version 4
+Copy every inventory and account record, keeping IDs
+Use existing minimums from version 3; otherwise use 5
+Replace tables and restore the sequence high-water marks
+Create unique indexes and stock validation triggers
+Room verifies the resulting schema
+Commit if all steps succeed; otherwise keep the old database
+```
+
+## Tests and limits
+
+See the package's verification report for observed results. The source includes plain Java CSV/algorithm checks, JUnit CSV tests, Room behavior tests under Robolectric, and real Android instrumentation tests. Tests use temporary databases, not the user's saved inventory.
+
+The simulated Android tests do not verify the system file-picker UI, physical device behavior, or actual SMS delivery. Stock status is still calculated rather than stored separately. Inventory is shared among accounts. CSV import adds new items only. Individually serialized assets, manufacturer/model fields, per-account inventory, and CSV export are outside this enhancement. Negative stock in a legacy database causes the upgrade to fail safely rather than silently deleting or changing that data.
+
+Dependency declarations were converted from a version catalog to direct Gradle declarations at the same versions to avoid a compiler initialization failure on the agent's Windows host. The source remains a normal Android Studio project. Host-specific compiler workarounds and test SDK files are excluded from the submission.
+
+## References
+
+- Google: https://developer.android.com/training/data-storage/room/sqlite-room-migration
+- Google: https://developer.android.com/training/data-storage/room/migrating-db-versions
+- Room releases: https://developer.android.com/jetpack/androidx/releases/room
+- Robolectric: https://robolectric.org/getting-started/
