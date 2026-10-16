@@ -1,0 +1,3 @@
+name,sku,quantity,minimum_stock,category,location
+"Cable, blue",M4-DEMO-CABLE,2,5,Cables,Shelf A
+Spare adapter,M4-DEMO-ADAPTER,6,3,Adapters,Drawer 2
