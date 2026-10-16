@@ -1,0 +1,1751 @@
+--- milestone_three/DATABASE_ENHANCEMENT.md
++++ enhanced/DATABASE_ENHANCEMENT.md
+@@ -0,0 +1,62 @@
++# Nexventory database enhancement
++
++Author: Johnathan Roehsner. CS 499 Milestone Four, October 3, 2026.
++
++## What changed
++
++- Room 2.8.5 now manages SQLite storage. InventoryRecord and UserRecord describe the tables; InventoryDao and UserDao define operations. DatabaseHelper keeps the existing screen/repository boundary while using those DAOs.
++- Database version 4 has explicit migration paths from versions 1, 2 and 3. Existing IDs, stock, names, SKUs, accounts and sequence high-water marks are preserved. Versions before 3 receive minimum 5; category/location start blank. Version 1 passwords are converted with the inherited salted password hasher. No destructive fallback is enabled.
++- Category and location can be saved, edited and displayed.
++- The Android file picker supplies a UTF-8 CSV. Four columns are required, in this order: name,sku,quantity,minimum_stock. An optional extended header adds category,location. With that header, each row must have all six fields; optional values may be empty.
++- Imports reject duplicates within the file and against saved inventory. SKU identity remains case-sensitive, matching the earlier schema. Whitespace around values is trimmed. Existing items are never silently overwritten.
++- The importer supports quoted commas, doubled quotes and embedded line breaks. It limits input to 1 MiB (1,048,576 bytes in the screen), 1,048,576 decoded characters, 1,000 data rows and 512 characters per field. Quantity and minimum must be nonnegative 32-bit integers.
++- Database triggers guard integer stock values and nonempty names/SKUs on raw writes. Room unique indexes protect usernames and SKUs. Query values use bound parameters.
++- Database and password operations run on a serial background executor. A generation counter rejects outdated search results; UI callbacks are ignored when the screen has closed.
++
++## Import pseudocode
++
++```text
++User selects a CSV and confirms Import
++Open a bounded UTF-8 stream
++Read and parse quoted CSV fields
++Validate the header, every row, field lengths and file limits
++Reject duplicate SKUs inside the file
++Begin a database transaction
++    Check every SKU against saved inventory
++    If any exists, stop and roll back
++    Insert all validated records
++    If any insert fails, roll back the entire batch
++Commit only when every row succeeds
++Close the stream and show the count, or show the error
++```
++
++## Upgrade pseudocode
++
++```text
++Room begins the upgrade transaction
++If starting at version 1, hash the old account passwords
++Remember the highest assigned inventory and account IDs
++Check existing stock for invalid negative values
++Create tables that match Room version 4
++Copy every inventory and account record, keeping IDs
++Use existing minimums from version 3; otherwise use 5
++Replace tables and restore the sequence high-water marks
++Create unique indexes and stock validation triggers
++Room verifies the resulting schema
++Commit if all steps succeed; otherwise keep the old database
++```
++
++## Tests and limits
++
++See the package's verification report for observed results. The source includes plain Java CSV/algorithm checks, JUnit CSV tests, Room behavior tests under Robolectric, and real Android instrumentation tests. Tests use temporary databases, not the user's saved inventory.
++
++The simulated Android tests do not verify the system file-picker UI, physical device behavior, or actual SMS delivery. Stock status is still calculated rather than stored separately. Inventory is shared among accounts. CSV import adds new items only. Individually serialized assets, manufacturer/model fields, per-account inventory, and CSV export are outside this enhancement. Negative stock in a legacy database causes the upgrade to fail safely rather than silently deleting or changing that data.
++
++Dependency declarations were converted from a version catalog to direct Gradle declarations at the same versions to avoid a compiler initialization failure on the agent's Windows host. The source remains a normal Android Studio project. Host-specific compiler workarounds and test SDK files are excluded from the submission.
++
++## References
++
++- Google: https://developer.android.com/training/data-storage/room/sqlite-room-migration
++- Google: https://developer.android.com/training/data-storage/room/migrating-db-versions
++- Room releases: https://developer.android.com/jetpack/androidx/releases/room
++- Robolectric: https://robolectric.org/getting-started/
+--- milestone_three/app\build.gradle
++++ enhanced/app\build.gradle
+@@ -1,5 +1,5 @@
+ plugins {
+-    alias(libs.plugins.android.application)
++    id "com.android.application"
+ }
+ 
+ android {
+@@ -14,8 +14,11 @@
+         applicationId "com.example.nexventory"
+         minSdk 23
+         targetSdk 36
+-        versionCode 2
+-        versionName "1.1"
++        versionCode 3
++        versionName "1.2"
++        javaCompileOptions {
++            annotationProcessorOptions { arguments += ["room.schemaLocation": "$projectDir/schemas".toString()] }
++        }
+ 
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+     }
+@@ -33,11 +36,14 @@
+ }
+ 
+ dependencies {
+-    implementation libs.activity.ktx
+-    implementation libs.appcompat
+-    implementation libs.constraintlayout
+-    implementation libs.material
+-    testImplementation libs.junit
+-    androidTestImplementation libs.espresso.core
+-    androidTestImplementation libs.ext.junit
++    implementation "androidx.room:room-runtime:2.8.5"
++    annotationProcessor "androidx.room:room-compiler:2.8.5"
++    implementation "androidx.activity:activity-ktx:1.8.0"
++    implementation "androidx.appcompat:appcompat:1.7.1"
++    implementation "androidx.constraintlayout:constraintlayout:2.1.4"
++    implementation "com.google.android.material:material:1.14.0"
++    testImplementation "junit:junit:4.13.2"
++    testImplementation "org.robolectric:robolectric:4.17"
++    androidTestImplementation "androidx.test.espresso:espresso-core:3.7.0"
++    androidTestImplementation "androidx.test.ext:junit:1.3.0"
+ }
+--- milestone_three/app\schemas\com.example.nexventory.NexventoryDatabase\4.json
++++ enhanced/app\schemas\com.example.nexventory.NexventoryDatabase\4.json
+@@ -0,0 +1,122 @@
++{
++  "formatVersion": 1,
++  "database": {
++    "version": 4,
++    "identityHash": "6f14c3b0112c54cf8733611524432d1d",
++    "entities": [
++      {
++        "tableName": "inventory",
++        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `sku` TEXT NOT NULL, `quantity` INTEGER NOT NULL, `minimum_stock` INTEGER NOT NULL DEFAULT 5, `category` TEXT NOT NULL DEFAULT '', `location` TEXT NOT NULL DEFAULT '')",
++        "fields": [
++          {
++            "fieldPath": "id",
++            "columnName": "id",
++            "affinity": "INTEGER",
++            "notNull": true
++          },
++          {
++            "fieldPath": "name",
++            "columnName": "name",
++            "affinity": "TEXT",
++            "notNull": true
++          },
++          {
++            "fieldPath": "sku",
++            "columnName": "sku",
++            "affinity": "TEXT",
++            "notNull": true
++          },
++          {
++            "fieldPath": "quantity",
++            "columnName": "quantity",
++            "affinity": "INTEGER",
++            "notNull": true
++          },
++          {
++            "fieldPath": "minimumStock",
++            "columnName": "minimum_stock",
++            "affinity": "INTEGER",
++            "notNull": true,
++            "defaultValue": "5"
++          },
++          {
++            "fieldPath": "category",
++            "columnName": "category",
++            "affinity": "TEXT",
++            "notNull": true,
++            "defaultValue": "''"
++          },
++          {
++            "fieldPath": "location",
++            "columnName": "location",
++            "affinity": "TEXT",
++            "notNull": true,
++            "defaultValue": "''"
++          }
++        ],
++        "primaryKey": {
++          "autoGenerate": true,
++          "columnNames": [
++            "id"
++          ]
++        },
++        "indices": [
++          {
++            "name": "index_inventory_sku",
++            "unique": true,
++            "columnNames": [
++              "sku"
++            ],
++            "orders": [],
++            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_inventory_sku` ON `${TABLE_NAME}` (`sku`)"
++          }
++        ]
++      },
++      {
++        "tableName": "users",
++        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `username` TEXT NOT NULL, `password` TEXT NOT NULL)",
++        "fields": [
++          {
++            "fieldPath": "id",
++            "columnName": "id",
++            "affinity": "INTEGER",
++            "notNull": true
++          },
++          {
++            "fieldPath": "username",
++            "columnName": "username",
++            "affinity": "TEXT",
++            "notNull": true
++          },
++          {
++            "fieldPath": "password",
++            "columnName": "password",
++            "affinity": "TEXT",
++            "notNull": true
++          }
++        ],
++        "primaryKey": {
++          "autoGenerate": true,
++          "columnNames": [
++            "id"
++          ]
++        },
++        "indices": [
++          {
++            "name": "index_users_username",
++            "unique": true,
++            "columnNames": [
++              "username"
++            ],
++            "orders": [],
++            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_users_username` ON `${TABLE_NAME}` (`username`)"
++          }
++        ]
++      }
++    ],
++    "setupQueries": [
++      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
++      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6f14c3b0112c54cf8733611524432d1d')"
++    ]
++  }
++}--- milestone_three/app\src\androidTest\java\com\example\nexventory\RestockDatabaseTest.java
++++ enhanced/app\src\androidTest\java\com\example\nexventory\RestockDatabaseTest.java
+@@ -16,6 +16,7 @@
+         Context target=InstrumentationRegistry.getInstrumentation().getTargetContext();
+         final File file=new File(target.getCacheDir(),"restock-test-"+System.nanoTime()+".db");
+         return new ContextWrapper(target) {
++            @Override public Context getApplicationContext() { return this; }
+             @Override public File getDatabasePath(String name) { return file; }
+             @Override public SQLiteDatabase openOrCreateDatabase(String name,int mode,SQLiteDatabase.CursorFactory factory) {
+                 return SQLiteDatabase.openOrCreateDatabase(file,factory);
+@@ -36,7 +37,7 @@
+                 old.execSQL("INSERT INTO inventory(name,sku,quantity) VALUES ('Cable','OLD',3)");
+                 old.setVersion(2);
+             }
+-            try(DatabaseHelper helper=new DatabaseHelper(context)) {
++            try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
+                 assertTrue(helper.validateUser("tester","test-only-pass"));
+                 InventoryItem old=helper.getAllInventoryItems().get(0);
+                 assertEquals(1,old.getId()); assertEquals(3,old.getQuantity()); assertEquals(5,old.getMinimumStock());
+@@ -47,7 +48,7 @@
+                 assertEquals(1,helper.getLowStockCount());
+                 assertEquals(1,helper.getOutOfStockCount());
+             }
+-            try(DatabaseHelper reopened=new DatabaseHelper(context)) {
++            try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
+                 assertEquals(10,reopened.searchInventoryItems("OLD",SearchMode.SKU).get(0).getMinimumStock());
+                 assertEquals(2,reopened.getTotalItems());
+             }
+@@ -55,7 +56,7 @@
+     }
+     @Test public void freshDatabaseSearchAndRestockFiltersCompose() {
+         Context context=isolatedContext();
+-        try(DatabaseHelper helper=new DatabaseHelper(context)) {
++        try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(context,"nexventory.db").build())) {
+             assertTrue(helper.addInventoryItem("Adapter","A",0,4));
+             assertTrue(helper.addInventoryItem("Patch Cable","C",3,10));
+             assertTrue(helper.addInventoryItem("Spare Switch","S",2,3));
+--- milestone_three/app\src\androidTest\java\com\example\nexventory\RoomDatabaseTest.java
++++ enhanced/app\src\androidTest\java\com\example\nexventory\RoomDatabaseTest.java
+@@ -0,0 +1,85 @@
++package com.example.nexventory;
++
++import android.content.Context;
++import android.database.sqlite.SQLiteDatabase;
++import androidx.test.platform.app.InstrumentationRegistry;
++import org.junit.Test;
++import static org.junit.Assert.*;
++import java.io.StringReader;
++
++/** Real Room tests use disposable databases; none opens the user's inventory. */
++public class RoomDatabaseTest {
++    private Context context() {return InstrumentationRegistry.getInstrumentation().getTargetContext();}
++    private String name() {return "room-test-"+System.nanoTime()+".db";}
++
++    @Test public void allLegacyVersionsPreserveAccountsIdsAndStock() {
++        for(int version=1;version<=3;version++) {
++            String name=name();Context c=context();
++            try {
++                try(SQLiteDatabase old=c.openOrCreateDatabase(name,0,null)) {
++                    old.execSQL("CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT UNIQUE NOT NULL,password TEXT NOT NULL)");
++                    old.execSQL("CREATE TABLE inventory(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,sku TEXT UNIQUE NOT NULL,quantity INTEGER NOT NULL"+
++                            (version==3?",minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock>=0)":"")+")");
++                    old.execSQL("INSERT INTO users(id,username,password) VALUES (7,'legacy',?)",new Object[]{version==1?"test-only-password":PasswordHasher.hash("test-only-password")});
++                    old.execSQL("INSERT INTO inventory(id,name,sku,quantity"+(version==3?",minimum_stock":"")+") VALUES (42,'Cable','OLD',3"+(version==3?",9":"")+")");
++                    old.execSQL("INSERT INTO inventory(id,name,sku,quantity) VALUES (100,'Deleted','DEL',0)");
++                    old.execSQL("DELETE FROM inventory WHERE id=100");old.setVersion(version);
++                }
++                try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(c,name).build())) {
++                    assertTrue(helper.validateUser("legacy","test-only-password"));
++                    assertFalse(helper.validateUser("legacy","wrong"));
++                    InventoryItem item=helper.getAllInventoryItems().get(0);
++                    assertEquals(42,item.getId());assertEquals("OLD",item.getSku());assertEquals(3,item.getQuantity());
++                    assertEquals(version==3?9:5,item.getMinimumStock());assertEquals("",item.getCategory());
++                    assertTrue(helper.addInventoryItem("Later","NEW",1,2,"Cables","Rack A"));
++                    assertTrue(helper.searchInventoryItems("NEW",SearchMode.SKU).get(0).getId()>100);
++                }
++                try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(c,name).build())) {
++                    assertEquals(2,reopened.getTotalItems());
++                    assertEquals("Rack A",reopened.searchInventoryItems("NEW",SearchMode.SKU).get(0).getLocation());
++                    assertTrue(reopened.validateUser("legacy","test-only-password"));
++                }
++            } finally {c.deleteDatabase(name);}
++        }
++    }
++
++    @Test public void validImportPersistsAndDuplicateOrInvalidBatchWritesNothing() throws Exception {
++        String name=name();Context c=context();String h=CsvInventory.HEADER+"\n";
++        try {
++            try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(c,name).build())) {
++                assertEquals(2,helper.importCsv(new StringReader(h+"Cable,C1,1,5,Cables,Rack A\nSwitch,S1,0,1,Switches,Rack B\n")));
++                try{helper.importCsv(new StringReader(h+"New,N1,2,4,,\nExisting,C1,3,4,,\n"));fail();}
++                catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("line 3"));}
++                assertEquals(2,helper.getTotalItems());assertFalse(helper.skuExists("N1",-1));
++                try{helper.importCsv(new StringReader(h+"New,N2,2,4,,\nBad,B1,-1,4,,\n"));fail();}
++                catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("line 3"));}
++                assertEquals(2,helper.getTotalItems());
++                assertFalse(helper.addInventoryItem("Bad","BAD",-1,5));
++                assertFalse(helper.addInventoryItem("Duplicate","C1",3,4));
++                InventoryItem item=helper.searchInventoryItems("C1",SearchMode.SKU).get(0);
++                assertTrue(helper.updateInventoryItem(item.getId(),"Cable","C1",5,5,"Cables","Rack C"));
++                assertEquals(1,helper.getRestockCount());
++            }
++            try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(c,name).build())) {
++                assertEquals("Rack C",reopened.searchInventoryItems("C1",SearchMode.SKU).get(0).getLocation());
++                assertEquals(2,reopened.getTotalItems());
++                assertTrue(reopened.deleteInventoryItem(reopened.searchInventoryItems("S1",SearchMode.SKU).get(0).getId()));
++                assertEquals(1,reopened.getTotalItems());
++            }
++        } finally {c.deleteDatabase(name);}
++    }
++
++    @Test public void unexpectedInsertFailureRollsBackEntireBatchAndRawValuesAreGuarded() throws Exception {
++        String name=name();Context c=context();
++        try(NexventoryDatabase db=NexventoryDatabase.builder(c,name).build()) {
++            DatabaseHelper helper=new DatabaseHelper(db);
++            db.getOpenHelper().getWritableDatabase().execSQL("CREATE TRIGGER test_fail BEFORE INSERT ON inventory WHEN NEW.sku='FAIL' BEGIN SELECT RAISE(ABORT,'test failure'); END");
++            try{helper.importCsv(new StringReader(CsvInventory.HEADER+"\nFirst,FIRST,1,5,,\nFail,FAIL,1,5,,\n"));fail();}
++            catch(IllegalArgumentException expected) {}
++            assertEquals(0,helper.getTotalItems());
++            try{db.getOpenHelper().getWritableDatabase().execSQL("INSERT INTO inventory(name,sku,quantity) VALUES ('Bad','NEG',-1)");fail();}
++            catch(android.database.sqlite.SQLiteException expected) {}
++            assertEquals(0,helper.getTotalItems());
++        } finally {c.deleteDatabase(name);}
++    }
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\CsvInventory.java
++++ enhanced/app\src\main\java\com\example\nexventory\CsvInventory.java
+@@ -0,0 +1,81 @@
++package com.example.nexventory;
++import java.io.*;
++import java.util.*;
++/** Bounded CSV parser: quoted commas, escaped quotes and multiline fields. */
++public final class CsvInventory {
++    public static final int MAX_CHARS=1048576, MAX_ROWS=1000, MAX_FIELD=512;
++    public static final String HEADER="name,sku,quantity,minimum_stock,category,location";
++    private CsvInventory() {}
++    public static final class Row {
++        public final int line,quantity,minimumStock;
++        public final String name,sku,category,location;
++        Row(int line,List<String> f) {
++            this.line=line;
++            try {
++                name=InputRules.required(f.get(0),"name"); sku=InputRules.required(f.get(1),"sku");
++                quantity=InputRules.quantity(f.get(2).trim()); minimumStock=InputRules.minimumStock(f.get(3).trim());
++                category=f.size()==6?f.get(4).trim():""; location=f.size()==6?f.get(5).trim():"";
++            } catch(IllegalArgumentException e) {throw fail(line,e.getMessage());}
++        }
++    }
++    private static IllegalArgumentException fail(int line,String message) {
++        return new IllegalArgumentException("CSV line "+line+": "+message+". Nothing was imported.");
++    }
++    public static List<Row> parse(Reader reader) throws IOException {
++        StringBuilder text=new StringBuilder(); char[] buffer=new char[4096]; int n;
++        while((n=reader.read(buffer))!=-1) {
++            if(text.length()+n>MAX_CHARS) throw fail(1,"file exceeds 1,048,576 characters");
++            text.append(buffer,0,n);
++        }
++        if(text.length()>0&&text.charAt(0)=='\uFEFF') text.deleteCharAt(0);
++        List<List<String>> records=new ArrayList<>(); List<Integer> lines=new ArrayList<>();
++        List<String> fields=new ArrayList<>(); StringBuilder field=new StringBuilder();
++        boolean quoted=false,closed=false; int line=1,start=1;
++        for(int i=0;i<text.length();i++) {
++            char ch=text.charAt(i);
++            if(quoted) {
++                if(ch=='"') {
++                    if(i+1<text.length()&&text.charAt(i+1)=='"') {field.append('"');i++;}
++                    else {quoted=false;closed=true;}
++                } else {
++                    field.append(ch);
++                    if(ch=='\n'||(ch=='\r'&&(i+1==text.length()||text.charAt(i+1)!='\n'))) line++;
++                }
++            } else if(ch==','||ch=='\r'||ch=='\n') {
++                fields.add(field.toString());field.setLength(0);closed=false;
++                if(fields.size()>6) throw fail(start,"too many columns");
++                if(ch!=',') {
++                    if(ch=='\r'&&i+1<text.length()&&text.charAt(i+1)=='\n')i++;
++                    records.add(fields);lines.add(start);fields=new ArrayList<>();
++                    if(records.size()>MAX_ROWS+1)throw fail(start,"maximum is 1,000 inventory rows");
++                    line++;start=line;
++                }
++            } else if(closed) throw fail(line,"unexpected character after closing quote");
++            else if(ch=='"') {
++                if(field.length()!=0)throw fail(line,"quote must begin a field");
++                quoted=true;
++            } else field.append(ch);
++            if(field.length()>MAX_FIELD)throw fail(line,"field exceeds 512 characters");
++        }
++        if(quoted)throw fail(start,"unclosed quoted field");
++        if(field.length()>0||!fields.isEmpty()||closed) {
++            fields.add(field.toString());
++            if(fields.size()>6)throw fail(start,"too many columns");
++            records.add(fields);lines.add(start);
++        }
++        if(records.isEmpty())throw fail(1,"missing header");
++        List<String> header=records.get(0);
++        if(!header.equals(Arrays.asList(HEADER.split(",")))&&!header.equals(Arrays.asList("name","sku","quantity","minimum_stock")))
++            throw fail(1,"header must be "+HEADER+" (last two columns may be omitted)");
++        if(records.size()==1)throw fail(1,"file has no inventory rows");
++        if(records.size()>MAX_ROWS+1)throw fail(1,"maximum is 1,000 inventory rows");
++        List<Row> rows=new ArrayList<>();Set<String> skus=new HashSet<>();
++        for(int i=1;i<records.size();i++) {
++            if(records.get(i).size()!=header.size())throw fail(lines.get(i),"column count does not match header");
++            Row row=new Row(lines.get(i),records.get(i));
++            if(!skus.add(row.sku))throw fail(row.line,"duplicate sku "+row.sku);
++            rows.add(row);
++        }
++        return rows;
++    }
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\DatabaseHelper.java
++++ enhanced/app\src\main\java\com\example\nexventory\DatabaseHelper.java
+@@ -1,234 +1,83 @@
+ package com.example.nexventory;
+-
+-import android.content.ContentValues;
+ import android.content.Context;
+-import android.database.Cursor;
+ import android.database.sqlite.SQLiteConstraintException;
+-import android.database.sqlite.SQLiteDatabase;
+-import android.database.sqlite.SQLiteOpenHelper;
+-
+-import java.util.ArrayList;
+-import java.util.List;
+-
+-public class DatabaseHelper extends SQLiteOpenHelper {
+-    private static final String DATABASE_NAME = "nexventory.db";
+-    private static final int DATABASE_VERSION = 3;
+-
+-    private static final String TABLE_USERS = "users";
+-    private static final String TABLE_INVENTORY = "inventory";
+-
+-    public DatabaseHelper(Context context) {
+-        super(context, DATABASE_NAME, null, DATABASE_VERSION);
++import java.io.*;
++import java.util.*;
++/** Compatibility boundary; all application storage now uses Room DAOs. */
++public final class DatabaseHelper implements AutoCloseable {
++    private final NexventoryDatabase database;
++    private final boolean ownsDatabase;
++    public DatabaseHelper(Context context) {database=NexventoryDatabase.shared(context);ownsDatabase=false;}
++    public DatabaseHelper(NexventoryDatabase database) {this.database=database;ownsDatabase=true;}
++    public void close() {if(ownsDatabase)database.close();}
++    public boolean createUser(String username,String password) {
++        if(username==null||username.trim().isEmpty()||password==null||password.isEmpty())return false;
++        UserRecord user=new UserRecord();user.username=username.trim();user.password=PasswordHasher.hash(password);
++        try{return database.users().insert(user)>0;}catch(SQLiteConstraintException e){return false;}
+     }
+-
+-    @Override
+-    public void onCreate(SQLiteDatabase db) {
+-        // Stores app users so login information persists after the app closes.
+-        db.execSQL("CREATE TABLE " + TABLE_USERS + " (" +
+-                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+-                "username TEXT UNIQUE NOT NULL, " +
+-                "password TEXT NOT NULL)");
+-
+-        // Stores inventory records that are shown in the database grid.
+-        db.execSQL("CREATE TABLE " + TABLE_INVENTORY + " (" +
+-                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+-                "name TEXT NOT NULL, " +
+-                "sku TEXT UNIQUE NOT NULL, " +
+-                "quantity INTEGER NOT NULL CHECK(quantity >= 0), " +
+-                "minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock >= 0))");
++    public boolean validateUser(String username,String password) {
++        if(username==null||password==null)return false;
++        String stored=database.users().passwordFor(username.trim());
++        return stored!=null&&PasswordHasher.matches(password,stored);
+     }
+-
+-    @Override
+-    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+-        if (oldVersion < 2) {
+-            // Preserve existing records while replacing legacy plain text passwords.
+-            List<Integer> ids = new ArrayList<>();
+-            List<String> passwords = new ArrayList<>();
+-            try (Cursor cursor = db.rawQuery("SELECT id, password FROM " + TABLE_USERS, null)) {
+-                while (cursor.moveToNext()) {
+-                    ids.add(cursor.getInt(0));
+-                    passwords.add(cursor.getString(1));
+-                }
+-            }
+-            for (int i = 0; i < ids.size(); i++) {
+-                ContentValues values = new ContentValues();
+-                values.put("password", PasswordHasher.hash(passwords.get(i)));
+-                db.update(TABLE_USERS, values, "id = ?", new String[]{String.valueOf(ids.get(i))});
+-            }
++    private static InventoryRecord record(int id,String name,String sku,int quantity,int minimum,String category,String location) {
++        InventoryRecord r=new InventoryRecord();r.id=id;
++        r.name=InputRules.required(name,"Name");r.sku=InputRules.required(sku,"SKU");
++        if(quantity<0||minimum<0)throw new IllegalArgumentException("Stock cannot be negative");
++        r.quantity=quantity;r.minimumStock=minimum;r.category=category==null?"":category.trim();r.location=location==null?"":location.trim();
++        return r;
++    }
++    public boolean addInventoryItem(String n,String s,int q,int m){return addInventoryItem(n,s,q,m,"","");}
++    public boolean addInventoryItem(String n,String s,int q,int m,String c,String l){
++        try{return database.inventory().insert(record(0,n,s,q,m,c,l))>0;}
++        catch(SQLiteConstraintException|IllegalArgumentException e){return false;}
++    }
++    public boolean updateInventoryItem(int id,String n,String s,int q,int m){
++        List<InventoryRecord> old=database.inventory().byId(id);if(old.isEmpty())return false;
++        return updateInventoryItem(id,n,s,q,m,old.get(0).category,old.get(0).location);
++    }
++    public boolean updateInventoryItem(int id,String n,String s,int q,int m,String c,String l){
++        try{return database.inventory().update(record(id,n,s,q,m,c,l))>0;}
++        catch(SQLiteConstraintException|IllegalArgumentException e){return false;}
++    }
++    public boolean deleteInventoryItem(int id){return database.inventory().delete(id)>0;}
++    public boolean skuExists(String s,int exceptId){return database.inventory().skuCount(s,exceptId)>0;}
++    public int addSampleInventory(){
++        return database.runInTransaction(()->{
++            int added=0;for(String[] s:SampleInventory.ITEMS)if(!skuExists(s[1],-1)){
++                database.inventory().insert(record(0,s[0],s[1],Integer.parseInt(s[2]),5,"Networking supplies",""));added++;
++            }return added;
++        });
++    }
++    public int removeSampleInventory(){
++        String[] skus=new String[SampleInventory.ITEMS.length];
++        for(int i=0;i<skus.length;i++)skus[i]=SampleInventory.ITEMS[i][1];
++        return database.inventory().removeSamples(skus);
++    }
++    /** Existing-SKU validation and inserts share one transaction to prevent partial imports. */
++    public int importCsv(Reader reader)throws IOException{
++        List<CsvInventory.Row> rows=CsvInventory.parse(reader);
++        try{return database.runInTransaction(()->{
++            for(CsvInventory.Row r:rows)if(skuExists(r.sku,-1))
++                throw new IllegalArgumentException("CSV line "+r.line+": sku "+r.sku+" already exists. Nothing was imported.");
++            for(CsvInventory.Row r:rows)database.inventory().insert(record(0,r.name,r.sku,r.quantity,r.minimumStock,r.category,r.location));
++            return rows.size();
++        });}catch(SQLiteConstraintException e){throw new IllegalArgumentException("Import conflicts with saved inventory. Nothing was imported.",e);}
++    }
++    public List<InventoryItem> getAllInventoryItems(){return searchInventoryItems("",SearchMode.PRODUCT_NAME);}
++    public List<InventoryItem> searchInventoryItems(String search,SearchMode mode){
++        String term=search==null?"":search.trim();List<InventoryRecord> records;
++        if(term.isEmpty())records=database.inventory().all();
++        else if(mode==SearchMode.ITEM_NUMBER){
++            try{records=database.inventory().byId(InputRules.quantity(term));}catch(IllegalArgumentException e){return new ArrayList<>();}
++        }else{
++            String pattern="%"+term.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%";
++            records=mode==SearchMode.SKU?database.inventory().bySku(pattern):database.inventory().byName(pattern);
+         }
+-        if (oldVersion < 3) {
+-            // Preserve inventory and account values; existing items start with target 5.
+-            db.execSQL("ALTER TABLE " + TABLE_INVENTORY +
+-                    " ADD COLUMN minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock >= 0)");
+-        }
++        List<InventoryItem> items=new ArrayList<>();for(InventoryRecord r:records)items.add(r.toItem());return items;
+     }
+-
+-    public boolean createUser(String username, String password) {
+-        SQLiteDatabase db = getWritableDatabase();
+-        ContentValues values = new ContentValues();
+-        values.put("username", username);
+-        values.put("password", PasswordHasher.hash(password));
+-        try { return db.insertOrThrow(TABLE_USERS, null, values) != -1; }
+-        catch (SQLiteConstraintException error) { return false; }
+-    }
+-
+-    public boolean validateUser(String username, String password) {
+-        SQLiteDatabase db = getReadableDatabase();
+-        try (Cursor cursor = db.rawQuery(
+-                "SELECT password FROM " + TABLE_USERS + " WHERE username = ?",
+-                new String[]{username})) {
+-            return cursor.moveToFirst() && PasswordHasher.matches(password, cursor.getString(0));
+-        }
+-    }
+-
+-    public boolean addInventoryItem(String name, String sku, int quantity, int minimumStock) {
+-        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0 || minimumStock < 0) return false;
+-        SQLiteDatabase db = getWritableDatabase();
+-        ContentValues values = new ContentValues();
+-        values.put("name", name);
+-        values.put("sku", sku);
+-        values.put("quantity", quantity);
+-        values.put("minimum_stock", minimumStock);
+-        try { return db.insertOrThrow(TABLE_INVENTORY, null, values) != -1; }
+-        catch (SQLiteConstraintException error) { return false; }
+-    }
+-
+-    public boolean updateInventoryItem(int id, String name, String sku, int quantity, int minimumStock) {
+-        if (name == null || name.trim().isEmpty() || sku == null || sku.trim().isEmpty() || quantity < 0 || minimumStock < 0) return false;
+-        SQLiteDatabase db = getWritableDatabase();
+-        ContentValues values = new ContentValues();
+-        values.put("name", name);
+-        values.put("sku", sku);
+-        values.put("quantity", quantity);
+-        values.put("minimum_stock", minimumStock);
+-        try {
+-            return db.update(TABLE_INVENTORY, values, "id = ?", new String[]{String.valueOf(id)}) > 0;
+-        } catch (SQLiteConstraintException error) {
+-            return false;
+-        }
+-    }
+-
+-    public boolean deleteInventoryItem(int id) {
+-        SQLiteDatabase db = getWritableDatabase();
+-        int rowsDeleted = db.delete(TABLE_INVENTORY, "id = ?", new String[]{String.valueOf(id)});
+-        return rowsDeleted > 0;
+-    }
+-
+-    public boolean skuExists(String sku, int exceptId) {
+-        try (Cursor cursor = getReadableDatabase().rawQuery(
+-                "SELECT 1 FROM " + TABLE_INVENTORY + " WHERE sku = ? AND id != ? LIMIT 1",
+-                new String[]{sku, String.valueOf(exceptId)})) {
+-            return cursor.moveToFirst();
+-        }
+-    }
+-
+-    public int addSampleInventory() {
+-        SQLiteDatabase db = getWritableDatabase();
+-        int added = 0;
+-        db.beginTransaction();
+-        try {
+-            for (String[] sample : SampleInventory.ITEMS) {
+-                ContentValues values = new ContentValues();
+-                values.put("name", sample[0]);
+-                values.put("sku", sample[1]);
+-                values.put("quantity", Integer.parseInt(sample[2]));
+-                if (db.insertWithOnConflict(TABLE_INVENTORY, null, values,
+-                        SQLiteDatabase.CONFLICT_IGNORE) != -1) added++;
+-            }
+-            db.setTransactionSuccessful();
+-        } finally {
+-            db.endTransaction();
+-        }
+-        return added;
+-    }
+-
+-    public int removeSampleInventory() {
+-        StringBuilder placeholders = new StringBuilder();
+-        String[] sampleSkus = new String[SampleInventory.ITEMS.length];
+-        for (int i = 0; i < sampleSkus.length; i++) {
+-            if (i > 0) placeholders.append(',');
+-            placeholders.append('?');
+-            sampleSkus[i] = SampleInventory.ITEMS[i][1];
+-        }
+-        return getWritableDatabase().delete(TABLE_INVENTORY,
+-                "sku IN (" + placeholders + ")", sampleSkus);
+-    }
+-
+-    public List<InventoryItem> getAllInventoryItems() {
+-        return searchInventoryItems("", SearchMode.PRODUCT_NAME);
+-    }
+-
+-    public List<InventoryItem> searchInventoryItems(String search, SearchMode mode) {
+-        List<InventoryItem> items = new ArrayList<>();
+-        SQLiteDatabase db = getReadableDatabase();
+-        String term = search == null ? "" : search.trim();
+-        String pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%";
+-        String where;
+-        String[] args;
+-        if (term.isEmpty()) {
+-            where = "";
+-            args = null;
+-        } else if (mode == SearchMode.ITEM_NUMBER) {
+-            if (!term.matches("[0-9]+")) return items;
+-            where = " WHERE id = ?";
+-            args = new String[]{term};
+-        } else {
+-            where = mode == SearchMode.SKU ? " WHERE sku LIKE ? ESCAPE '\\'"
+-                    : " WHERE name LIKE ? ESCAPE '\\'";
+-            args = new String[]{pattern};
+-        }
+-        try (Cursor cursor = db.rawQuery(
+-                "SELECT id, name, sku, quantity, minimum_stock FROM " + TABLE_INVENTORY
+-                        + where, args)) {
+-            while (cursor.moveToNext()) {
+-                items.add(new InventoryItem(cursor.getInt(0), cursor.getString(1),
+-                        cursor.getString(2), cursor.getInt(3), cursor.getInt(4)));
+-            }
+-        }
+-        return items;
+-    }
+-
+-    public int getTotalItems() {
+-        SQLiteDatabase db = getReadableDatabase();
+-        Cursor cursor = db.rawQuery("SELECT COUNT(*) FROM " + TABLE_INVENTORY, null);
+-        int count = 0;
+-        if (cursor.moveToFirst()) {
+-            count = cursor.getInt(0);
+-        }
+-        cursor.close();
+-        return count;
+-    }
+-
+-    public int getLowStockCount() {
+-        SQLiteDatabase db = getReadableDatabase();
+-        Cursor cursor = db.rawQuery(
+-                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity > 0 AND quantity < minimum_stock",
+-                null);
+-        int count = 0;
+-        if (cursor.moveToFirst()) {
+-            count = cursor.getInt(0);
+-        }
+-        cursor.close();
+-        return count;
+-    }
+-
+-    public int getRestockCount() {
+-        try (Cursor cursor = getReadableDatabase().rawQuery(
+-                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity < minimum_stock", null)) {
+-            return cursor.moveToFirst() ? cursor.getInt(0) : 0;
+-        }
+-    }
+-
+-    public int getOutOfStockCount() {
+-        SQLiteDatabase db = getReadableDatabase();
+-        Cursor cursor = db.rawQuery(
+-                "SELECT COUNT(*) FROM " + TABLE_INVENTORY + " WHERE quantity = 0",
+-                null);
+-        int count = 0;
+-        if (cursor.moveToFirst()) {
+-            count = cursor.getInt(0);
+-        }
+-        cursor.close();
+-        return count;
+-    }
++    public int getTotalItems(){return database.inventory().total();}
++    public int getLowStockCount(){return database.inventory().low();}
++    public int getOutOfStockCount(){return database.inventory().out();}
++    public int getRestockCount(){return database.inventory().restock();}
+ }
+--- milestone_three/app\src\main\java\com\example\nexventory\DatabaseTasks.java
++++ enhanced/app\src\main\java\com\example\nexventory\DatabaseTasks.java
+@@ -0,0 +1,29 @@
++package com.example.nexventory;
++
++import android.app.Activity;
++import android.widget.Toast;
++import java.util.concurrent.Callable;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++
++/** Serial background work, followed by a callback on the screen's UI thread. */
++public final class DatabaseTasks {
++    public interface Callback<T> { void accept(T value); }
++    private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
++    private DatabaseTasks() {}
++    public static <T> void run(Activity screen, Callable<T> task, Callback<T> success) {
++        run(screen, task, success, message -> Toast.makeText(screen, message, Toast.LENGTH_LONG).show());
++    }
++    public static <T> void run(Activity screen, Callable<T> task, Callback<T> success, Callback<String> failure) {
++        WORKER.execute(() -> {
++            try {
++                T result = task.call();
++                screen.runOnUiThread(() -> { if (!screen.isFinishing() && !screen.isDestroyed()) success.accept(result); });
++            } catch (Exception error) {
++                String message = error instanceof IllegalArgumentException ? error.getMessage()
++                        : "Unable to access saved inventory. No incomplete import was saved.";
++                screen.runOnUiThread(() -> { if (!screen.isFinishing() && !screen.isDestroyed()) failure.accept(message); });
++            }
++        });
++    }
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\HomeActivity.java
++++ enhanced/app\src\main\java\com\example\nexventory\HomeActivity.java
+@@ -39,8 +39,11 @@
+     @Override
+     protected void onResume() {
+         super.onResume();
+-        totalItemsHomeText.setText("Total Items: " + inventoryRepository.total());
+-        lowStockHomeText.setText("Low Stock: " + inventoryRepository.lowStock());
+-        outOfStockHomeText.setText("Out of Stock: " + inventoryRepository.outOfStock());
++        if (inventoryRepository == null) return;
++        DatabaseTasks.run(this, () -> new int[]{inventoryRepository.total(),inventoryRepository.lowStock(),inventoryRepository.outOfStock()}, counts -> {
++            totalItemsHomeText.setText("Total Items: " + counts[0]);
++            lowStockHomeText.setText("Low Stock: " + counts[1]);
++            outOfStockHomeText.setText("Out of Stock: " + counts[2]);
++        });
+     }
+ }
+--- milestone_three/app\src\main\java\com\example\nexventory\InventoryDao.java
++++ enhanced/app\src\main\java\com\example\nexventory\InventoryDao.java
+@@ -0,0 +1,28 @@
++package com.example.nexventory;
++
++import androidx.room.Dao;
++import androidx.room.Insert;
++import androidx.room.Query;
++import androidx.room.Update;
++import java.util.List;
++
++/** Room checks these queries when compiling. All values use bound parameters. */
++@Dao
++public interface InventoryDao {
++    @Insert long insert(InventoryRecord record);
++    @Update int update(InventoryRecord record);
++    @Query("DELETE FROM inventory WHERE id = :id") int delete(int id);
++    @Query("DELETE FROM inventory WHERE sku IN (:skus)") int removeSamples(String[] skus);
++    @Query("SELECT * FROM inventory ORDER BY id") List<InventoryRecord> all();
++    @Query("SELECT * FROM inventory WHERE id = :id") List<InventoryRecord> byId(int id);
++    @Query("SELECT * FROM inventory WHERE name LIKE :pattern ESCAPE '\\' ORDER BY id")
++    List<InventoryRecord> byName(String pattern);
++    @Query("SELECT * FROM inventory WHERE sku LIKE :pattern ESCAPE '\\' ORDER BY id")
++    List<InventoryRecord> bySku(String pattern);
++    @Query("SELECT COUNT(*) FROM inventory WHERE sku = :sku AND id != :exceptId")
++    int skuCount(String sku, int exceptId);
++    @Query("SELECT COUNT(*) FROM inventory") int total();
++    @Query("SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND quantity < minimum_stock") int low();
++    @Query("SELECT COUNT(*) FROM inventory WHERE quantity = 0") int out();
++    @Query("SELECT COUNT(*) FROM inventory WHERE quantity < minimum_stock") int restock();
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\InventoryItem.java
++++ enhanced/app\src\main\java\com\example\nexventory\InventoryItem.java
+@@ -6,12 +6,16 @@
+     private final String sku;
+     private final int quantity;
+     private final int minimumStock;
++    private final String category, location;
+ 
+     public InventoryItem(int id, String name, String sku, int quantity) {
+         this(id, name, sku, quantity, 5);
+     }
+ 
+     public InventoryItem(int id, String name, String sku, int quantity, int minimumStock) {
++        this(id,name,sku,quantity,minimumStock,"","");
++    }
++    public InventoryItem(int id,String name,String sku,int quantity,int minimumStock,String category,String location) {
+         if (quantity < 0 || minimumStock < 0) throw new IllegalArgumentException("Stock values cannot be negative");
+         if (name == null || sku == null) throw new IllegalArgumentException("Name and SKU are required");
+         this.minimumStock = minimumStock;
+@@ -19,7 +23,12 @@
+         this.name = name;
+         this.sku = sku;
+         this.quantity = quantity;
++        this.category = category == null ? "" : category;
++        this.location = location == null ? "" : location;
+     }
++
++    public String getCategory() { return category; }
++    public String getLocation() { return location; }
+ 
+     public int getId() {
+         return id;
+--- milestone_three/app\src\main\java\com\example\nexventory\InventoryRecord.java
++++ enhanced/app\src\main\java\com\example\nexventory\InventoryRecord.java
+@@ -0,0 +1,23 @@
++package com.example.nexventory;
++
++import androidx.annotation.NonNull;
++import androidx.room.ColumnInfo;
++import androidx.room.Entity;
++import androidx.room.Index;
++import androidx.room.PrimaryKey;
++
++/** The stored record. Stock status remains calculated from quantity and minimum. */
++@Entity(tableName = "inventory", indices = {@Index(value = "sku", unique = true)})
++public class InventoryRecord {
++    @PrimaryKey(autoGenerate = true) public int id;
++    @NonNull public String name = "";
++    @NonNull public String sku = "";
++    public int quantity;
++    @ColumnInfo(name = "minimum_stock", defaultValue = "5") public int minimumStock = 5;
++    @NonNull @ColumnInfo(defaultValue = "''") public String category = "";
++    @NonNull @ColumnInfo(defaultValue = "''") public String location = "";
++
++    public InventoryItem toItem() {
++        return new InventoryItem(id, name, sku, quantity, minimumStock, category, location);
++    }
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\InventoryRepository.java
++++ enhanced/app\src\main\java\com\example\nexventory\InventoryRepository.java
+@@ -19,6 +19,13 @@
+         return database.updateInventoryItem(id, name, sku, quantity, minimumStock);
+     }
+ 
++    public boolean add(String n,String s,int q,int m,String c,String l) {
++        return database.addInventoryItem(n,s,q,m,c,l);
++    }
++    public boolean update(int id,String n,String s,int q,int m,String c,String l) {
++        return database.updateInventoryItem(id,n,s,q,m,c,l);
++    }
++    public int importCsv(java.io.Reader reader) throws java.io.IOException {return database.importCsv(reader);}
+     public boolean delete(int id) { return database.deleteInventoryItem(id); }
+     public int addSampleInventory() { return database.addSampleInventory(); }
+     public int removeSampleInventory() { return database.removeSampleInventory(); }
+--- milestone_three/app\src\main\java\com\example\nexventory\LoginActivity.java
++++ enhanced/app\src\main\java\com\example\nexventory\LoginActivity.java
+@@ -10,6 +10,7 @@
+ import androidx.appcompat.app.AppCompatActivity;
+ 
+ public class LoginActivity extends AppCompatActivity {
++    private boolean signingIn;
+     private DatabaseHelper databaseHelper;
+     private SessionManager sessionManager;
+     private EditText usernameInput;
+@@ -38,37 +39,29 @@
+     }
+ 
+     private void loginUser() {
++        if (signingIn) return;
+         String username = usernameInput.getText().toString().trim();
+         String password = passwordInput.getText().toString();
+-
+-        if (!isInputValid(username, password)) {
+-            return;
+-        }
+-
+-        // Login only succeeds when the username and password match the database record.
+-        if (databaseHelper.validateUser(username, password)) {
+-            Toast.makeText(this, "Login successful", Toast.LENGTH_SHORT).show();
+-            openHomeScreen();
+-        } else {
+-            Toast.makeText(this, "Invalid username or password", Toast.LENGTH_SHORT).show();
+-        }
++        if (!isInputValid(username,password)) return;
++        signingIn=true;
++        DatabaseTasks.run(this, () -> databaseHelper.validateUser(username,password), accepted -> {
++            signingIn=false;
++            if (accepted) openHomeScreen();
++            else Toast.makeText(this,"Invalid username or password",Toast.LENGTH_LONG).show();
++        }, message -> {signingIn=false;Toast.makeText(this,message,Toast.LENGTH_LONG).show();});
+     }
+ 
+     private void createAccount() {
++        if (signingIn) return;
+         String username = usernameInput.getText().toString().trim();
+         String password = passwordInput.getText().toString();
+-
+-        if (!isInputValid(username, password)) {
+-            return;
+-        }
+-
+-        // New users are saved to SQLite so the account remains available later.
+-        if (databaseHelper.createUser(username, password)) {
+-            Toast.makeText(this, "Account created. You are now logged in.", Toast.LENGTH_SHORT).show();
+-            openHomeScreen();
+-        } else {
+-            Toast.makeText(this, "Username already exists. Choose another username.", Toast.LENGTH_SHORT).show();
+-        }
++        if (!isInputValid(username,password)) return;
++        signingIn=true;
++        DatabaseTasks.run(this, () -> databaseHelper.createUser(username,password), accepted -> {
++            signingIn=false;
++            if (accepted) openHomeScreen();
++            else Toast.makeText(this,"Username already exists or account could not be saved.",Toast.LENGTH_LONG).show();
++        }, message -> {signingIn=false;Toast.makeText(this,message,Toast.LENGTH_LONG).show();});
+     }
+ 
+     private boolean isInputValid(String username, String password) {
+--- milestone_three/app\src\main\java\com\example\nexventory\MainActivity.java
++++ enhanced/app\src\main\java\com\example\nexventory\MainActivity.java
+@@ -27,6 +27,17 @@
+ import java.util.List;
+ 
+ public class MainActivity extends AppCompatActivity {
++    private int loadGeneration;
++    private boolean saving;
++    private EditText categoryInput, locationInput;
++    private final androidx.activity.result.ActivityResultLauncher<String[]> csvPicker =
++            registerForActivityResult(new androidx.activity.result.contract.ActivityResultContracts.OpenDocument(), uri -> {
++                if (uri == null) return;
++                new AlertDialog.Builder(this).setTitle("Import inventory?")
++                        .setMessage("All rows must be valid and use new SKUs. If one row fails, nothing is imported. Limit: 1 MB and 1,000 items.")
++                        .setNegativeButton("Cancel", null)
++                        .setPositiveButton("Import", (dialog, which) -> importCsv(uri)).show();
++            });
+     private InventoryRepository inventoryRepository;
+     private SmsAlertService smsAlertService;
+     private LinearLayout inventoryList;
+@@ -73,6 +84,9 @@
+         itemSkuInput = findViewById(R.id.itemSkuInput);
+         itemQuantityInput = findViewById(R.id.itemQuantityInput);
+         minimumStockInput = findViewById(R.id.minimumStockInput);
++        categoryInput = findViewById(R.id.categoryInput);
++        locationInput = findViewById(R.id.locationInput);
++        findViewById(R.id.importCsvButton).setOnClickListener(v -> csvPicker.launch(new String[]{"text/*", "application/csv", "application/vnd.ms-excel"}));
+         stockFilterSpinner = findViewById(R.id.stockFilterSpinner);
+         sortOrderSpinner = findViewById(R.id.sortOrderSpinner);
+         resultCountText = findViewById(R.id.resultCountText);
+@@ -128,26 +142,20 @@
+                 .setMessage("Add up to 15 networking supplies labeled SAMPLE-NET. Existing records will stay unchanged.")
+                 .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+                 .setPositiveButton("Load", (dialog, which) -> {
+-                    try {
+-                        int added = inventoryRepository.addSampleInventory();
+-                        searchBar.setText("");
+-                        loadInventoryGrid();
+-                        Toast.makeText(this, added == 0 ? "Sample items are already loaded"
+-                                : "Added " + added + " sample items", Toast.LENGTH_SHORT).show();
+-                    } catch (RuntimeException error) {
+-                        Toast.makeText(this, "Unable to load sample items", Toast.LENGTH_SHORT).show();
+-                    }
++                    DatabaseTasks.run(this, () -> inventoryRepository.addSampleInventory(), added -> {
++                        searchBar.setText(""); loadInventoryGrid();
++                        Toast.makeText(this,"Added " + added + " sample items",Toast.LENGTH_SHORT).show();
++                    });
+                 }).show());
+         removeSamplesButton.setOnClickListener(v -> new AlertDialog.Builder(this)
+                 .setTitle("Remove sample items?")
+                 .setMessage("Only records with the 15 original SAMPLE-NET SKUs will be removed. Your other inventory will stay saved.")
+                 .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+                 .setPositiveButton("Remove", (dialog, which) -> {
+-                    int removed = inventoryRepository.removeSampleInventory();
+-                    clearInputs();
+-                    searchBar.setText("");
+-                    loadInventoryGrid();
+-                    Toast.makeText(this, "Removed " + removed + " sample items", Toast.LENGTH_SHORT).show();
++                    DatabaseTasks.run(this, () -> inventoryRepository.removeSampleInventory(), removed -> {
++                        clearInputs(); searchBar.setText(""); loadInventoryGrid();
++                        Toast.makeText(this,"Removed " + removed + " sample items",Toast.LENGTH_SHORT).show();
++                    });
+                 }).show());
+ 
+         homeButton.setOnClickListener(v -> finish());
+@@ -178,62 +186,59 @@
+     }
+ 
+     private void addInventoryItem() {
++        if (saving) return;
++        final int id = selectedItemId;
++        
+         String name = itemNameInput.getText().toString().trim();
+         String sku = itemSkuInput.getText().toString().trim();
+-        String quantityText = itemQuantityInput.getText().toString().trim();
+-
+-        if (!isInventoryInputValid(name, sku, quantityText)) {
+-            return;
+-        }
+-
+-        int quantity;
+-        try { quantity = InputRules.quantity(quantityText); }
+-        catch (IllegalArgumentException error) { itemQuantityInput.setError(error.getMessage()); return; }
+-        int minimumStock;
+-        try { minimumStock = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
+-        catch (IllegalArgumentException error) { minimumStockInput.setError(error.getMessage()); return; }
+-        if (inventoryRepository.add(name, sku, quantity, minimumStock)) {
+-            Toast.makeText(this, "Inventory item added", Toast.LENGTH_SHORT).show();
+-            showSmsResult(name, quantity, minimumStock);
+-            clearInputs();
+-            loadInventoryGrid();
+-        } else {
+-            Toast.makeText(this, inventoryRepository.skuExists(sku, -1)
+-                    ? "SKU already exists. Use Update to change this item."
+-                    : "Unable to save item. Try again.", Toast.LENGTH_SHORT).show();
+-        }
++        String q = itemQuantityInput.getText().toString().trim();
++        if (!isInventoryInputValid(name,sku,q)) return;
++        int quantity, minimum;
++        try { quantity = InputRules.quantity(q); }
++        catch (IllegalArgumentException e) { itemQuantityInput.setError(e.getMessage()); return; }
++        try { minimum = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
++        catch (IllegalArgumentException e) { minimumStockInput.setError(e.getMessage()); return; }
++        String category = categoryInput.getText().toString().trim();
++        String location = locationInput.getText().toString().trim();
++        saving = true;
++        DatabaseTasks.run(this, () -> {
++            boolean saved = inventoryRepository.add(name,sku,quantity,minimum,category,location);
++            return saved ? 1 : inventoryRepository.skuExists(sku, -1) ? 2 : 0;
++        }, result -> {
++            saving = false;
++            if (result == 1) {
++                Toast.makeText(this,"Inventory item saved",Toast.LENGTH_SHORT).show();
++                showSmsResult(name,quantity,minimum); clearInputs(); loadInventoryGrid();
++            } else Toast.makeText(this,result == 2 ? "SKU already belongs to another item." : "Unable to save item.",Toast.LENGTH_LONG).show();
++        }, message -> { saving = false; Toast.makeText(this,message,Toast.LENGTH_LONG).show(); });
+     }
+ 
+     private void updateInventoryItem() {
+-        if (selectedItemId == -1) {
+-            Toast.makeText(this, "Select Edit on an item first", Toast.LENGTH_SHORT).show();
+-            return;
+-        }
+-
++        if (saving) return;
++        final int id = selectedItemId;
++        if (id == -1) { Toast.makeText(this,"Select an item first",Toast.LENGTH_SHORT).show(); return; }
+         String name = itemNameInput.getText().toString().trim();
+         String sku = itemSkuInput.getText().toString().trim();
+-        String quantityText = itemQuantityInput.getText().toString().trim();
+-
+-        if (!isInventoryInputValid(name, sku, quantityText)) {
+-            return;
+-        }
+-
+-        int quantity;
+-        try { quantity = InputRules.quantity(quantityText); }
+-        catch (IllegalArgumentException error) { itemQuantityInput.setError(error.getMessage()); return; }
+-        int minimumStock;
+-        try { minimumStock = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
+-        catch (IllegalArgumentException error) { minimumStockInput.setError(error.getMessage()); return; }
+-        if (inventoryRepository.update(selectedItemId, name, sku, quantity, minimumStock)) {
+-            Toast.makeText(this, "Inventory item updated", Toast.LENGTH_SHORT).show();
+-            showSmsResult(name, quantity, minimumStock);
+-            clearInputs();
+-            loadInventoryGrid();
+-        } else {
+-            Toast.makeText(this, inventoryRepository.skuExists(sku, selectedItemId)
+-                    ? "SKU already belongs to another item."
+-                    : "Unable to update item. Try again.", Toast.LENGTH_SHORT).show();
+-        }
++        String q = itemQuantityInput.getText().toString().trim();
++        if (!isInventoryInputValid(name,sku,q)) return;
++        int quantity, minimum;
++        try { quantity = InputRules.quantity(q); }
++        catch (IllegalArgumentException e) { itemQuantityInput.setError(e.getMessage()); return; }
++        try { minimum = InputRules.minimumStock(minimumStockInput.getText().toString().trim()); }
++        catch (IllegalArgumentException e) { minimumStockInput.setError(e.getMessage()); return; }
++        String category = categoryInput.getText().toString().trim();
++        String location = locationInput.getText().toString().trim();
++        saving = true;
++        DatabaseTasks.run(this, () -> {
++            boolean saved = inventoryRepository.update(id,name,sku,quantity,minimum,category,location);
++            return saved ? 1 : inventoryRepository.skuExists(sku, id) ? 2 : 0;
++        }, result -> {
++            saving = false;
++            if (result == 1) {
++                Toast.makeText(this,"Inventory item saved",Toast.LENGTH_SHORT).show();
++                showSmsResult(name,quantity,minimum); clearInputs(); loadInventoryGrid();
++            } else Toast.makeText(this,result == 2 ? "SKU already belongs to another item." : "Unable to save item.",Toast.LENGTH_LONG).show();
++        }, message -> { saving = false; Toast.makeText(this,message,Toast.LENGTH_LONG).show(); });
+     }
+ 
+     private boolean isInventoryInputValid(String name, String sku, String quantityText) {
+@@ -246,27 +251,61 @@
+ 
+     private void loadInventoryGrid() {
+         if (!screenReady) return;
+-        selectedRow = null;
+-        inventoryList.removeAllViews();
+-
+-        List<InventoryItem> items = inventoryRepository.select(searchBar.getText().toString(), searchMode,
+-                InventoryAlgorithms.StockFilter.values()[stockFilterSpinner.getSelectedItemPosition()],
+-                InventoryAlgorithms.SortOrder.values()[sortOrderSpinner.getSelectedItemPosition()]);
+-        resultCountText.setText("Showing " + items.size() + " matching item(s)");
+-        noResultsText.setVisibility(items.isEmpty() ? View.VISIBLE : View.GONE);
+-        for (InventoryItem item : items) {
+-            addInventoryRow(item);
++        final int generation = ++loadGeneration;
++        String query = searchBar.getText().toString();
++        SearchMode mode = searchMode;
++        InventoryAlgorithms.StockFilter filter = InventoryAlgorithms.StockFilter.values()[stockFilterSpinner.getSelectedItemPosition()];
++        InventoryAlgorithms.SortOrder order = InventoryAlgorithms.SortOrder.values()[sortOrderSpinner.getSelectedItemPosition()];
++        DatabaseTasks.run(this, () -> new GridResult(inventoryRepository.select(query,mode,filter,order),
++                inventoryRepository.total(),inventoryRepository.lowStock(),inventoryRepository.outOfStock(),inventoryRepository.restockCount()), result -> {
++            if (generation != loadGeneration) return;
++            selectedRow = null; inventoryList.removeAllViews();
++            resultCountText.setText("Showing " + result.items.size() + " matching item(s)");
++            noResultsText.setVisibility(result.items.isEmpty() ? View.VISIBLE : View.GONE);
++            for (InventoryItem item : result.items) addInventoryRow(item);
++            totalItemsText.setText("Total Items: " + result.total);
++            lowStockText.setText("Low Stock: " + result.low);
++            outOfStockText.setText("Out of Stock: " + result.out);
++            alertSummaryText.setText(result.restock == 0 ? "No items below their restock target."
++                    : result.restock + " item(s) below their restock target. Tap Show Restock List to prioritize them.");
++        });
++    }
++    private static final class GridResult {
++        final List<InventoryItem> items;
++        final int total, low, out, restock;
++        GridResult(List<InventoryItem> items,int total,int low,int out,int restock) {
++            this.items=items;this.total=total;this.low=low;this.out=out;this.restock=restock;
+         }
+-
+-        int total = inventoryRepository.total();
+-        int low = inventoryRepository.lowStock();
+-        int out = inventoryRepository.outOfStock();
+-        totalItemsText.setText("Total Items: " + total);
+-        lowStockText.setText("Low Stock: " + low);
+-        outOfStockText.setText("Out of Stock: " + out);
+-        int restock = inventoryRepository.restockCount();
+-        alertSummaryText.setText(restock == 0 ? "No items below their restock target."
+-                : restock + " item(s) below their restock target. Tap Show Restock List to prioritize them.");
++    }
++    private void importCsv(android.net.Uri uri) {
++        if (saving) return;
++        saving = true;
++        DatabaseTasks.run(this, () -> {
++            try (java.io.InputStream input = getContentResolver().openInputStream(uri)) {
++                if (input == null) throw new java.io.IOException("File unavailable");
++                java.nio.charset.CharsetDecoder decoder = java.nio.charset.StandardCharsets.UTF_8.newDecoder()
++                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
++                        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
++                try (java.io.Reader reader = new java.io.InputStreamReader(new BoundedCsvStream(input),decoder)) {
++                    return inventoryRepository.importCsv(reader);
++                }
++            }
++        }, count -> {
++            saving=false;clearInputs();searchBar.setText("");loadInventoryGrid();
++            new AlertDialog.Builder(this).setTitle("Import complete").setMessage("Saved " + count + " inventory items.").setPositiveButton("OK",null).show();
++        }, message -> {
++            saving=false;
++            new AlertDialog.Builder(this).setTitle("Import stopped").setMessage(message).setPositiveButton("OK",null).show();
++        });
++    }
++    private static final class BoundedCsvStream extends java.io.FilterInputStream {
++        private int count;
++        BoundedCsvStream(java.io.InputStream stream) {super(stream);}
++        private void track(int n) {
++            if (n > 0 && (count += n) > 1048576) throw new IllegalArgumentException("CSV exceeds 1 MB. Nothing was imported.");
++        }
++        @Override public int read() throws java.io.IOException {int n=in.read();if(n!=-1)track(1);return n;}
++        @Override public int read(byte[] b,int off,int len) throws java.io.IOException {int n=in.read(b,off,len);track(n);return n;}
+     }
+ 
+     private void addInventoryRow(InventoryItem item) {
+@@ -283,7 +322,8 @@
+         nameView.setTextSize(16);
+         TextView detailsView = createCell("Item #: " + item.getId() + "  •  SKU: " + item.getSku()
+                 + "\nQuantity: " + item.getQuantity() + "  •  Status: " + item.getStatus()
+-                + "\nMinimum: " + item.getMinimumStock() + "  •  Shortage: " + item.getShortage());
++                 + "\nMinimum: " + item.getMinimumStock() + "  •  Shortage: " + item.getShortage()
++                + "\nCategory: " + item.getCategory() + "  •  Location: " + item.getLocation());
+         row.addView(nameView);
+         row.addView(detailsView);
+         row.setClickable(true);
+@@ -316,6 +356,8 @@
+         itemSkuInput.setText(item.getSku());
+         itemQuantityInput.setText(String.valueOf(item.getQuantity()));
+         minimumStockInput.setText(String.valueOf(item.getMinimumStock()));
++        categoryInput.setText(item.getCategory());
++        locationInput.setText(item.getLocation());
+         itemForm.post(() -> scrollView.smoothScrollTo(0, itemForm.getTop()));
+         Toast.makeText(this, "Editing " + item.getName(), Toast.LENGTH_SHORT).show();
+     }
+@@ -326,13 +368,10 @@
+                 .setMessage("This removes the item from saved inventory.")
+                 .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+                 .setPositiveButton("Delete", (dialog, which) -> {
+-                    if (inventoryRepository.delete(id)) {
+-                        Toast.makeText(this, "Inventory item deleted", Toast.LENGTH_SHORT).show();
+-                        clearInputs();
+-                        loadInventoryGrid();
+-                    } else {
+-                        Toast.makeText(this, "Unable to delete item", Toast.LENGTH_SHORT).show();
+-                    }
++                    DatabaseTasks.run(this, () -> inventoryRepository.delete(id), deleted -> {
++                        if (deleted) {clearInputs();loadInventoryGrid();}
++                        Toast.makeText(this,deleted ? "Inventory item deleted" : "Unable to delete item",Toast.LENGTH_SHORT).show();
++                    });
+                 }).show();
+     }
+ 
+@@ -351,6 +390,7 @@
+         itemSkuInput.setText("");
+         itemQuantityInput.setText("");
+         minimumStockInput.setText("5");
++        categoryInput.setText("");locationInput.setText("");
+     }
+ 
+     private void showSmsResult(String itemName, int quantity, int minimumStock) {
+--- milestone_three/app\src\main\java\com\example\nexventory\NexventoryDatabase.java
++++ enhanced/app\src\main\java\com\example\nexventory\NexventoryDatabase.java
+@@ -0,0 +1,97 @@
++package com.example.nexventory;
++
++import android.content.Context;
++import android.database.Cursor;
++import androidx.annotation.NonNull;
++import androidx.room.Database;
++import androidx.room.Room;
++import androidx.room.RoomDatabase;
++import androidx.room.migration.Migration;
++import androidx.sqlite.db.SupportSQLiteDatabase;
++import java.util.ArrayList;
++import java.util.List;
++
++@Database(entities = {InventoryRecord.class, UserRecord.class}, version = 4, exportSchema = true)
++public abstract class NexventoryDatabase extends RoomDatabase implements AutoCloseable {
++    public abstract InventoryDao inventory();
++    public abstract UserDao users();
++    private static volatile NexventoryDatabase instance;
++
++    public static NexventoryDatabase shared(Context context) {
++        if (instance == null) synchronized (NexventoryDatabase.class) {
++            if (instance == null) instance = builder(context.getApplicationContext(), "nexventory.db").build();
++        }
++        return instance;
++    }
++
++    public static Builder<NexventoryDatabase> builder(Context context, String name) {
++        return Room.databaseBuilder(context, NexventoryDatabase.class, name)
++                .addMigrations(migrationFrom(1), migrationFrom(2), migrationFrom(3))
++                .addCallback(new Callback() {
++                    @Override public void onCreate(@NonNull SupportSQLiteDatabase db) { installRules(db); }
++                    @Override public void onOpen(@NonNull SupportSQLiteDatabase db) { installRules(db); }
++                });
++    }
++
++    /** Explicit upgrade paths; invalid legacy stock fails the transaction rather than losing data. */
++    public static Migration migrationFrom(final int from) {
++        return new Migration(from, 4) {
++            @Override public void migrate(@NonNull SupportSQLiteDatabase db) {
++                if (from == 1) {
++                    List<Integer> ids = new ArrayList<>();
++                    List<String> passwords = new ArrayList<>();
++                    try (Cursor c = db.query("SELECT id, password FROM users")) {
++                        while (c.moveToNext()) { ids.add(c.getInt(0)); passwords.add(c.getString(1)); }
++                    }
++                    for (int i = 0; i < ids.size(); i++) db.execSQL(
++                            "UPDATE users SET password = ? WHERE id = ?",
++                            new Object[]{PasswordHasher.hash(passwords.get(i)), ids.get(i)});
++                }
++                // Capture sequence high-water marks, including IDs of deleted rows.
++                long inventorySequence = sequence(db, "inventory");
++                long userSequence = sequence(db, "users");
++                db.execSQL("CREATE TABLE inventory_new (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
++                        + "name TEXT NOT NULL, sku TEXT NOT NULL, quantity INTEGER NOT NULL, "
++                        + "minimum_stock INTEGER NOT NULL DEFAULT 5, category TEXT NOT NULL DEFAULT '', "
++                        + "location TEXT NOT NULL DEFAULT '')");
++                String minimum = from < 3 ? "5" : "minimum_stock";
++                try (Cursor c = db.query("SELECT COUNT(*) FROM inventory WHERE quantity < 0 OR " + minimum + " < 0")) {
++                    if (c.moveToFirst() && c.getInt(0) != 0)
++                        throw new IllegalStateException("Correct negative stock values before upgrading. Existing data was preserved.");
++                }
++                db.execSQL("INSERT INTO inventory_new(id,name,sku,quantity,minimum_stock) "
++                        + "SELECT id,name,sku,quantity," + minimum + " FROM inventory");
++                db.execSQL("CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, "
++                        + "username TEXT NOT NULL, password TEXT NOT NULL)");
++                db.execSQL("INSERT INTO users_new(id,username,password) SELECT id,username,password FROM users");
++                db.execSQL("DROP TABLE inventory");
++                db.execSQL("ALTER TABLE inventory_new RENAME TO inventory");
++                db.execSQL("DROP TABLE users");
++                db.execSQL("ALTER TABLE users_new RENAME TO users");
++                db.execSQL("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'inventory'", new Object[]{inventorySequence});
++                db.execSQL("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'users'", new Object[]{userSequence});
++                db.execSQL("CREATE UNIQUE INDEX index_inventory_sku ON inventory(sku)");
++                db.execSQL("CREATE UNIQUE INDEX index_users_username ON users(username)");
++                installRules(db);
++            }
++        };
++    }
++
++    private static long sequence(SupportSQLiteDatabase db, String table) {
++        try (Cursor c = db.query("SELECT seq FROM sqlite_sequence WHERE name = ?", new Object[]{table})) {
++            return c.moveToFirst() ? c.getLong(0) : 0;
++        }
++    }
++
++    /** Triggers protect stock values even when a write bypasses the repository. */
++    private static void installRules(SupportSQLiteDatabase db) {
++        for (String event : new String[]{"INSERT", "UPDATE"}) {
++            db.execSQL("CREATE TRIGGER IF NOT EXISTS inventory_valid_" + event.toLowerCase(java.util.Locale.ROOT)
++                    + " BEFORE " + event + " ON inventory WHEN "
++                    + "typeof(NEW.quantity) != 'integer' OR NEW.quantity < 0 OR NEW.quantity > 2147483647 "
++                    + "OR typeof(NEW.minimum_stock) != 'integer' OR NEW.minimum_stock < 0 OR NEW.minimum_stock > 2147483647 "
++                    + "OR length(trim(NEW.name)) = 0 OR length(trim(NEW.sku)) = 0 "
++                    + "BEGIN SELECT RAISE(ABORT, 'Invalid inventory values'); END");
++        }
++    }
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\UserDao.java
++++ enhanced/app\src\main\java\com\example\nexventory\UserDao.java
+@@ -0,0 +1,12 @@
++package com.example.nexventory;
++
++import androidx.room.Dao;
++import androidx.room.Insert;
++import androidx.room.Query;
++
++@Dao
++public interface UserDao {
++    @Insert long insert(UserRecord user);
++    @Query("SELECT password FROM users WHERE username = :username LIMIT 1")
++    String passwordFor(String username);
++}
+--- milestone_three/app\src\main\java\com\example\nexventory\UserRecord.java
++++ enhanced/app\src\main\java\com\example\nexventory\UserRecord.java
+@@ -0,0 +1,13 @@
++package com.example.nexventory;
++
++import androidx.annotation.NonNull;
++import androidx.room.Entity;
++import androidx.room.Index;
++import androidx.room.PrimaryKey;
++
++@Entity(tableName = "users", indices = {@Index(value = "username", unique = true)})
++public class UserRecord {
++    @PrimaryKey(autoGenerate = true) public int id;
++    @NonNull public String username = "";
++    @NonNull public String password = "";
++}
+--- milestone_three/app\src\main\res\layout\activity_main.xml
++++ enhanced/app\src\main\res\layout\activity_main.xml
+@@ -197,6 +197,10 @@
+                     android:text="No matching items"
+                     android:visibility="gone" />
+ 
++                <Button android:id="@+id/importCsvButton" android:layout_width="match_parent"
++                    android:layout_height="wrap_content" android:text="Import Inventory CSV" />
++                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                    android:text="CSV columns: name, sku, quantity, minimum_stock, category, location. Category and location are optional. Use new SKUs only." />
+                 <Button
+                     android:id="@+id/loadSamplesButton"
+                     android:layout_width="match_parent"
+@@ -297,6 +301,14 @@
+                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                     android:text="Use 0 for no restock target. At the target, no restocking is needed." />
+ 
++                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                    android:labelFor="@id/categoryInput" android:text="Category (optional)" />
++                <EditText android:id="@+id/categoryInput" android:layout_width="match_parent"
++                    android:layout_height="48dp" android:inputType="text" android:hint="For example, cables" android:background="#FFFFFF" android:padding="10dp" />
++                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
++                    android:labelFor="@id/locationInput" android:text="Location (optional)" />
++                <EditText android:id="@+id/locationInput" android:layout_width="match_parent"
++                    android:layout_height="48dp" android:inputType="text" android:hint="For example, rack A" android:background="#FFFFFF" android:padding="10dp" />
+                 <Button
+                     android:id="@+id/addItemButton"
+                     android:layout_width="match_parent"
+--- milestone_three/app\src\test\java\com\example\nexventory\CsvInventoryTest.java
++++ enhanced/app\src\test\java\com\example\nexventory\CsvInventoryTest.java
+@@ -0,0 +1,35 @@
++package com.example.nexventory;
++import java.io.StringReader;
++import java.util.List;
++import org.junit.Test;
++import static org.junit.Assert.*;
++
++public class CsvInventoryTest {
++    private List<CsvInventory.Row> parse(String s) throws Exception {return CsvInventory.parse(new StringReader(s));}
++    @Test public void readsQuotedFieldsAndOptionalMetadata() throws Exception {
++        List<CsvInventory.Row> r=parse(CsvInventory.HEADER+"\r\n\"Cable, blue\",C1,0,5,Cables,Rack A\r\n\"Switch \"\"Core\"\"\",S1,1,2,,\r\n");
++        assertEquals(2,r.size());assertEquals("Cable, blue",r.get(0).name);
++        assertEquals("Rack A",r.get(0).location);assertEquals("Switch \"Core\"",r.get(1).name);
++        assertEquals("",r.get(1).category);
++    }
++    @Test public void basicHeaderAndMultilineNameAreSupported() throws Exception {
++        List<CsvInventory.Row> r=parse("\uFEFFname,sku,quantity,minimum_stock\n\"Patch\ncable\",C1,3,9\n");
++        assertEquals("Patch\ncable",r.get(0).name);assertEquals("",r.get(0).location);
++    }
++    @Test public void rejectsInvalidStockDuplicatesAndMalformedQuotes() throws Exception {
++        for(String row:new String[]{"Cable,C1,-1,5,,","Cable,C1,1,2147483648,,","Cable,C1,1.5,5,,",
++                "Cable, ,1,5,,","\"Cable\"x,C1,1,5,,","\"Cable,C1,1,5,,",
++                "Cable,C1,1,5,,\nOther,C1,1,5,,","Cable,C1,1,5,"}) {
++            try{parse(CsvInventory.HEADER+"\n"+row);fail("Accepted invalid CSV");}
++            catch(IllegalArgumentException e){assertTrue(e.getMessage().contains("Nothing was imported"));}
++        }
++    }
++    @Test public void rejectsOversizedFieldsFilesAndBatches() throws Exception {
++        StringBuilder s=new StringBuilder(CsvInventory.HEADER+"\n");
++        for(int i=0;i<1001;i++)s.append("Cable,C").append(i).append(",1,5,,\n");
++        for(String value:new String[]{s.toString(),"X".repeat(CsvInventory.MAX_CHARS+1),
++                CsvInventory.HEADER+"\n"+"X".repeat(513)+",C1,1,5,,"}) {
++            try{parse(value);fail("Accepted oversized CSV");}catch(IllegalArgumentException expected){}
++        }
++    }
++}
+--- milestone_three/app\src\test\java\com\example\nexventory\RoomDatabaseJvmTest.java
++++ enhanced/app\src\test\java\com\example\nexventory\RoomDatabaseJvmTest.java
+@@ -0,0 +1,92 @@
++package com.example.nexventory;
++
++import android.content.Context;
++import android.database.sqlite.SQLiteDatabase;
++import org.robolectric.RobolectricTestRunner;
++import org.robolectric.RuntimeEnvironment;
++import org.robolectric.annotation.Config;
++import org.robolectric.annotation.SQLiteMode;
++import org.junit.runner.RunWith;
++import org.junit.Test;
++import static org.junit.Assert.*;
++import java.io.StringReader;
++
++/** Runs real Room migrations and imports in a simulated Android runtime with disposable databases. */
++@RunWith(RobolectricTestRunner.class)
++@Config(sdk = 28, manifest = Config.NONE)
++@SQLiteMode(SQLiteMode.Mode.LEGACY)
++public class RoomDatabaseJvmTest {
++    private Context context() {return RuntimeEnvironment.getApplication();}
++    private String name() {return "room-test-"+System.nanoTime()+".db";}
++
++    @Test public void allLegacyVersionsPreserveAccountsIdsAndStock() {
++        for(int version=1;version<=3;version++) {
++            String name=name();Context c=context();
++            try {
++                try(SQLiteDatabase old=c.openOrCreateDatabase(name,0,null)) {
++                    old.execSQL("CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT UNIQUE NOT NULL,password TEXT NOT NULL)");
++                    old.execSQL("CREATE TABLE inventory(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,sku TEXT UNIQUE NOT NULL,quantity INTEGER NOT NULL"+
++                            (version==3?",minimum_stock INTEGER NOT NULL DEFAULT 5 CHECK(minimum_stock>=0)":"")+")");
++                    old.execSQL("INSERT INTO users(id,username,password) VALUES (7,'legacy',?)",new Object[]{version==1?"test-only-password":PasswordHasher.hash("test-only-password")});
++                    old.execSQL("INSERT INTO inventory(id,name,sku,quantity"+(version==3?",minimum_stock":"")+") VALUES (42,'Cable','OLD',3"+(version==3?",9":"")+")");
++                    old.execSQL("INSERT INTO inventory(id,name,sku,quantity) VALUES (100,'Deleted','DEL',0)");
++                    old.execSQL("DELETE FROM inventory WHERE id=100");old.setVersion(version);
++                }
++                try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(c,name).allowMainThreadQueries().build())) {
++                    assertTrue(helper.validateUser("legacy","test-only-password"));
++                    assertFalse(helper.validateUser("legacy","wrong"));
++                    InventoryItem item=helper.getAllInventoryItems().get(0);
++                    assertEquals(42,item.getId());assertEquals("OLD",item.getSku());assertEquals(3,item.getQuantity());
++                    assertEquals(version==3?9:5,item.getMinimumStock());assertEquals("",item.getCategory());
++                    assertTrue(helper.addInventoryItem("Later","NEW",1,2,"Cables","Rack A"));
++                    assertTrue(helper.searchInventoryItems("NEW",SearchMode.SKU).get(0).getId()>100);
++                }
++                try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(c,name).allowMainThreadQueries().build())) {
++                    assertEquals(2,reopened.getTotalItems());
++                    assertEquals("Rack A",reopened.searchInventoryItems("NEW",SearchMode.SKU).get(0).getLocation());
++                    assertTrue(reopened.validateUser("legacy","test-only-password"));
++                }
++            } finally {c.deleteDatabase(name);}
++        }
++    }
++
++    @Test public void validImportPersistsAndDuplicateOrInvalidBatchWritesNothing() throws Exception {
++        String name=name();Context c=context();String h=CsvInventory.HEADER+"\n";
++        try {
++            try(DatabaseHelper helper=new DatabaseHelper(NexventoryDatabase.builder(c,name).allowMainThreadQueries().build())) {
++                assertEquals(2,helper.importCsv(new StringReader(h+"Cable,C1,1,5,Cables,Rack A\nSwitch,S1,0,1,Switches,Rack B\n")));
++                try{helper.importCsv(new StringReader(h+"New,N1,2,4,,\nExisting,C1,3,4,,\n"));fail();}
++                catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("line 3"));}
++                assertEquals(2,helper.getTotalItems());assertFalse(helper.skuExists("N1",-1));
++                try{helper.importCsv(new StringReader(h+"New,N2,2,4,,\nBad,B1,-1,4,,\n"));fail();}
++                catch(IllegalArgumentException expected){assertTrue(expected.getMessage().contains("line 3"));}
++                assertEquals(2,helper.getTotalItems());
++                assertFalse(helper.addInventoryItem("Bad","BAD",-1,5));
++                assertFalse(helper.addInventoryItem("Duplicate","C1",3,4));
++                InventoryItem item=helper.searchInventoryItems("C1",SearchMode.SKU).get(0);
++                assertTrue(helper.updateInventoryItem(item.getId(),"Cable","C1",5,5,"Cables","Rack C"));
++                assertEquals(1,helper.getRestockCount());
++            }
++            try(DatabaseHelper reopened=new DatabaseHelper(NexventoryDatabase.builder(c,name).allowMainThreadQueries().build())) {
++                assertEquals("Rack C",reopened.searchInventoryItems("C1",SearchMode.SKU).get(0).getLocation());
++                assertEquals(2,reopened.getTotalItems());
++                assertTrue(reopened.deleteInventoryItem(reopened.searchInventoryItems("S1",SearchMode.SKU).get(0).getId()));
++                assertEquals(1,reopened.getTotalItems());
++            }
++        } finally {c.deleteDatabase(name);}
++    }
++
++    @Test public void unexpectedInsertFailureRollsBackEntireBatchAndRawValuesAreGuarded() throws Exception {
++        String name=name();Context c=context();
++        try(NexventoryDatabase db=NexventoryDatabase.builder(c,name).allowMainThreadQueries().build()) {
++            DatabaseHelper helper=new DatabaseHelper(db);
++            db.getOpenHelper().getWritableDatabase().execSQL("CREATE TRIGGER test_fail BEFORE INSERT ON inventory WHEN NEW.sku='FAIL' BEGIN SELECT RAISE(ABORT,'test failure'); END");
++            try{helper.importCsv(new StringReader(CsvInventory.HEADER+"\nFirst,FIRST,1,5,,\nFail,FAIL,1,5,,\n"));fail();}
++            catch(IllegalArgumentException expected) {}
++            assertEquals(0,helper.getTotalItems());
++            try{db.getOpenHelper().getWritableDatabase().execSQL("INSERT INTO inventory(name,sku,quantity) VALUES ('Bad','NEG',-1)");fail();}
++            catch(android.database.sqlite.SQLiteException expected) {}
++            assertEquals(0,helper.getTotalItems());
++        } finally {c.deleteDatabase(name);}
++    }
++}
+--- milestone_three/build.gradle
++++ enhanced/build.gradle
+@@ -1,4 +1,4 @@
+ // Top-level build file where you can add configuration options common to all sub-projects/modules.
+ plugins {
+-    alias(libs.plugins.android.application) apply false
++    id "com.android.application" version "9.2.1" apply false
+ }--- milestone_three/gradle\dependency-versions.txt
++++ enhanced/gradle\dependency-versions.txt
+@@ -0,0 +1,22 @@
++[versions]
++agp = "9.2.1"
++junit = "4.13.2"
++junitVersion = "1.3.0"
++espressoCore = "3.7.0"
++appcompat = "1.7.1"
++material = "1.14.0"
++activityKtx = "1.8.0"
++constraintlayout = "2.1.4"
++
++[libraries]
++junit = { group = "junit", name = "junit", version.ref = "junit" }
++ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
++espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
++appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
++material = { group = "com.google.android.material", name = "material", version.ref = "material" }
++activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activityKtx" }
++constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
++
++[plugins]
++android-application = { id = "com.android.application", version.ref = "agp" }
++
+--- milestone_three/gradle\libs.versions.toml
++++ enhanced/gradle\libs.versions.toml
+@@ -1,22 +0,0 @@
+-[versions]
+-agp = "9.2.1"
+-junit = "4.13.2"
+-junitVersion = "1.3.0"
+-espressoCore = "3.7.0"
+-appcompat = "1.7.1"
+-material = "1.14.0"
+-activityKtx = "1.8.0"
+-constraintlayout = "2.1.4"
+-
+-[libraries]
+-junit = { group = "junit", name = "junit", version.ref = "junit" }
+-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activityKtx" }
+-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
+-
+-[plugins]
+-android-application = { id = "com.android.application", version.ref = "agp" }
+-
+--- milestone_three/verification\CsvChecks.java
++++ enhanced/verification\CsvChecks.java
+@@ -0,0 +1,44 @@
++import com.example.nexventory.CsvInventory;
++import java.io.*;
++import java.util.*;
++
++public class CsvChecks {
++    static int assertions;
++    static void check(boolean yes) { assertions++; if(!yes)throw new AssertionError(); }
++    static List<CsvInventory.Row> parse(String s)throws Exception{return CsvInventory.parse(new StringReader(s));}
++    static void reject(String s,String message)throws Exception {
++        try{parse(s);throw new AssertionError("Accepted invalid CSV");}
++        catch(IllegalArgumentException e){check(e.getMessage().contains(message));}
++    }
++    public static void main(String[] args)throws Exception {
++        String h=CsvInventory.HEADER+"\r\n";
++        List<CsvInventory.Row> r=parse("\uFEFF"+h+"\"Cable, blue\",C1,0,5,Cables,Rack A\r\n\"Switch \"\"Core\"\"\",S1,2147483647,0,,\r\n");
++        check(r.size()==2);check(r.get(0).name.equals("Cable, blue"));check(r.get(0).line==2);
++        check(r.get(1).name.equals("Switch \"Core\""));check(r.get(1).quantity==Integer.MAX_VALUE);check(r.get(1).location.isEmpty());
++        r=parse("name,sku,quantity,minimum_stock\nCable,C2,1,2");check(r.size()==1);check(r.get(0).category.isEmpty());
++        r=parse(h+"\"Patch\ncable\",C3,1,2,,\n");check(r.get(0).name.equals("Patch\ncable"));
++        reject(h+"Cable,C1,-1,2,,","Quantity");reject(h+"Cable,C1,1,2147483648,,","too large");
++        reject(h+"Cable,C1,1.5,2,,","whole number");reject(h+"Cable, ,1,2,,","sku is required");
++        reject(h+"Cable,C1,1,2,,\nOther,C1,2,3,,","duplicate sku");
++        reject(h+"Cable,C1,1,2,","column count");reject("bad,header\n","header must");
++        reject(h+"\"Cable,C1,1,2,,","unclosed");reject(h+"Ca\"ble,C1,1,2,,","quote must");
++        reject(h+"\"Cable\"x,C1,1,2,,","after closing");reject(h+"Cable,C1,1,2,,,extra","too many");
++        reject(h,"no inventory");reject("","missing header");reject(h+"Cable,C1,1,2,,\n\n","column count");
++        reject(h+"X".repeat(513)+",C1,1,2,,","512");reject("X".repeat(CsvInventory.MAX_CHARS+1),"characters");
++        StringBuilder batch=new StringBuilder(h);
++        for(int i=0;i<1000;i++)batch.append("Cable,C").append(i).append(",1,2,,\n");
++        check(parse(batch.toString()).size()==1000);
++        batch.append("Cable,C1000,1,2,,\n");reject(batch.toString(),"1,000");
++        // Quoted round trips across commas, quotes, CRLF and non-ASCII names.
++        Random random=new Random(499);
++        String chars="abc,\"\n é";
++        for(int i=0;i<200;i++) {
++            StringBuilder name=new StringBuilder("Cable");
++            for(int j=0;j<20;j++)name.append(chars.charAt(random.nextInt(chars.length())));
++            String value=name.toString().trim();
++            r=parse(h+"\""+value.replace("\"","\"\"")+"\",SKU"+i+",3,9,,\n");
++            check(r.get(0).name.equals(value));check(r.get(0).minimumStock==9);
++        }
++        System.out.println("CSV checks passed: "+assertions+" assertions");
++    }
++}
+--- milestone_three/verification\check-source.py
++++ enhanced/verification\check-source.py
+@@ -0,0 +1,13 @@
++from pathlib import Path
++import xml.etree.ElementTree as ET
++root=Path(__file__).resolve().parents[1]
++count=0
++for file in (root/'app/src').rglob('*.xml'):
++    ET.parse(file);count+=1
++text=(root/'app/src/main/java/com/example/nexventory/MainActivity.java').read_text(encoding='utf-8')
++for field in ['categoryInput','locationInput','importCsvButton']:
++    assert field in text
++    assert field in (root/'app/src/main/res/layout/activity_main.xml').read_text(encoding='utf-8')
++assert 'allowMainThreadQueries' not in (root/'app/src/main/java/com/example/nexventory/NexventoryDatabase.java').read_text()
++assert 'fallbackToDestructiveMigration' not in (root/'app/src/main/java/com/example/nexventory/NexventoryDatabase.java').read_text()
++print(f'PASS: {count} XML files parsed; controls and production database configuration checked.')
+--- milestone_three/verification\check_sql.py
++++ enhanced/verification\check_sql.py
+@@ -1,44 +1,4 @@
+-"""Exercise SQL extracted from DatabaseHelper in desktop SQLite, not Android."""
+-from pathlib import Path
+-import re
+-import sqlite3
+-import xml.etree.ElementTree as ET
+-
+-root=Path(__file__).resolve().parents[1]
+-source=(root/'app/src/main/java/com/example/nexventory/DatabaseHelper.java').read_text()
+-def sql_expression(expr):
+-    # All execSQL expressions here are string literals and two constant table names.
+-    expr=expr.replace('TABLE_USERS','"users"').replace('TABLE_INVENTORY','"inventory"')
+-    return ''.join(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',expr))
+-statements=[sql_expression(x) for x in re.findall(r'db\.execSQL\((.*?)\);',source,re.S)]
+-create_users,create_inventory,upgrade=statements
+-db=sqlite3.connect(':memory:')
+-db.execute(create_users)
+-db.execute('CREATE TABLE inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, sku TEXT UNIQUE NOT NULL, quantity INTEGER NOT NULL CHECK(quantity >= 0))')
+-db.execute("INSERT INTO users(username,password) VALUES ('migration-test','unchanged-hash')")
+-db.execute("INSERT INTO inventory(name,sku,quantity) VALUES ('Existing cable','OLD',5)")
+-db.execute(upgrade)
+-assert db.execute('SELECT id,name,sku,quantity,minimum_stock FROM inventory').fetchone()==(1,'Existing cable','OLD',5,5)
+-assert db.execute('SELECT password FROM users').fetchone()==('unchanged-hash',)
+-for connection in [db,sqlite3.connect(':memory:')]:
+-    if connection is not db: connection.execute(create_inventory)
+-    for value in [-1,None]:
+-        try:
+-            connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Invalid',str(value),1,value))
+-        except sqlite3.IntegrityError: pass
+-        else: raise AssertionError('Minimum constraint missing')
+-    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Adapter','A',0,4))
+-    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('Patch Cable','C',3,10))
+-    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('No target','N',0,0))
+-    connection.execute('INSERT INTO inventory(name,sku,quantity,minimum_stock) VALUES (?,?,?,?)',('At target','T',5,5))
+-    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity < minimum_stock').fetchone()[0]==2
+-    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity > 0 AND quantity < minimum_stock').fetchone()[0]==1
+-    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity = 0').fetchone()[0]==2
+-    connection.execute('UPDATE inventory SET minimum_stock=0 WHERE sku="C"')
+-    assert connection.execute('SELECT COUNT(*) FROM inventory WHERE quantity < minimum_stock').fetchone()[0]==1
+-    connection.close()
+-count=0
+-for xml in (root/'app/src').rglob('*.xml'):
+-    ET.parse(xml); count+=1
+-print(f'PASS: desktop SQLite {sqlite3.sqlite_version} checked exact CREATE/ALTER statements from source, v2 preservation, fresh schema, constraints, counts and target edits; {count} XML resources parsed.')
+-print('Android SQLiteOpenHelper and emulator workflows require the separate instrumentation/manual checks.')
++"""Explain the replacement for the historical SQLite-only smoke check."""
++print("The database is now accessed through Room. Run gradlew.bat :app:testDebugUnitTest")
++print("RoomDatabaseJvmTest exercises migrations, persistence, duplicate rejection, and rollback.")
++print("For device checks run gradlew.bat :app:connectedDebugAndroidTest with an emulator connected.")
+--- milestone_three/verification\run-checks.ps1
++++ enhanced/verification\run-checks.ps1
+@@ -4,8 +4,10 @@
+ $classes = Join-Path $root 'build\algorithm-checks'
+ New-Item -ItemType Directory -Path $classes -Force | Out-Null
+ $src = Join-Path $root 'app\src\main\java\com\example\nexventory'
+-& "$JdkBin\javac.exe" --release 11 -d $classes "$src\InventoryItem.java" "$src\InventoryAlgorithms.java" "$src\InputRules.java" "$PSScriptRoot\AlgorithmChecks.java" "$PSScriptRoot\AlgorithmBenchmark.java"
++& "$JdkBin\javac.exe" --release 11 -d $classes "$src\InventoryItem.java" "$src\InventoryAlgorithms.java" "$src\InputRules.java" "$src\CsvInventory.java" "$PSScriptRoot\CsvChecks.java" "$PSScriptRoot\AlgorithmChecks.java" "$PSScriptRoot\AlgorithmBenchmark.java"
+ if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
++& "$JdkBin\java.exe" -cp $classes CsvChecks
++if ($LASTEXITCODE -ne 0) { throw 'CSV checks failed' }
+ & "$JdkBin\java.exe" -cp $classes com.example.nexventory.AlgorithmChecks
+ if ($LASTEXITCODE -ne 0) { throw 'Regression checks failed' }
+ & "$JdkBin\java.exe" -cp $classes com.example.nexventory.AlgorithmBenchmark

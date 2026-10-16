@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.nexventory.RoomDatabaseJvmTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-03T22:13:33.850Z" hostname="JOHNDESKTOP" time="3.07">
+  <properties/>
+  <testcase name="validImportPersistsAndDuplicateOrInvalidBatchWritesNothing" classname="com.example.nexventory.RoomDatabaseJvmTest" time="1.172"/>
+  <testcase name="unexpectedInsertFailureRollsBackEntireBatchAndRawValuesAreGuarded" classname="com.example.nexventory.RoomDatabaseJvmTest" time="0.049"/>
+  <testcase name="allLegacyVersionsPreserveAccountsIdsAndStock" classname="com.example.nexventory.RoomDatabaseJvmTest" time="1.705"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.example.nexventory.CsvInventoryTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-03T22:13:33.730Z" hostname="JOHNDESKTOP" time="0.026">
+  <properties/>
+  <testcase name="rejectsOversizedFieldsFilesAndBatches" classname="com.example.nexventory.CsvInventoryTest" time="0.021"/>
+  <testcase name="basicHeaderAndMultilineNameAreSupported" classname="com.example.nexventory.CsvInventoryTest" time="0.0"/>
+  <testcase name="rejectsInvalidStockDuplicatesAndMalformedQuotes" classname="com.example.nexventory.CsvInventoryTest" time="0.0"/>
+  <testcase name="readsQuotedFieldsAndOptionalMetadata" classname="com.example.nexventory.CsvInventoryTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
