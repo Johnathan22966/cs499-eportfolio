@@ -1,0 +1,346 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:05.460
+to here the third category is databases the application already uses persistent SQL light
+
+00:00:05.460 --> 00:00:12.260
+storage through database helper which extends SQL light open helper the database is named
+
+00:00:12.260 --> 00:00:20.140
+nextfentory.db and the current scheme version is one moving to room would improve the existing
+
+00:00:20.140 --> 00:00:27.380
+persistence layer it would not be the first introduction of a database the only create method
+
+00:00:27.380 --> 00:00:37.180
+defines two tables the user table stores an auto incrementing ID a unique required username and
+
+00:00:37.180 --> 00:00:45.300
+a required password the inventory table shows an auto incrementing ID a required name a unique
+
+00:00:45.460 --> 00:00:55.900
+required sku and a required quantity the unique sku constraint is a useful existing protection the
+
+00:00:55.900 --> 00:01:03.140
+database can reject two records with the same sku even if an interface check is missing the ID
+
+00:01:03.140 --> 00:01:09.700
+provides a stable key for updates and deletes so changing an item's name does not change which
+
+00:01:09.700 --> 00:01:19.180
+record is being addressed the helper already exists with the implementation to create read
+
+00:01:19.180 --> 00:01:26.620
+update and delete operators and in order to kind of take a look at that a little scroll down
+
+00:01:26.620 --> 00:01:53.570
+so it looks like from here to here we go into the create and then from from here to here we have
+
+00:01:53.570 --> 00:02:05.010
+our add inventory and then the next one will be here to here which is our update inventory and then
+
+00:02:05.010 --> 00:02:19.840
+we have our delete inventory and finally we have our read inventory right here this code uses a
+
+00:02:19.840 --> 00:02:26.680
+database file not a hard-coded inventory list ordinary app closure is intended to preserve records
+
+00:02:26.680 --> 00:02:35.320
+clearing app data or uninstalling is a different operation the notification phone records the
+
+00:02:35.320 --> 00:02:42.440
+notification phone number records is stored separately in shared preferences one detail matters when
+
+00:02:42.440 --> 00:02:50.400
+explaining the dashboard get total item uses count star so it counts inventory records does not add
+
+00:02:50.400 --> 00:02:57.320
+together the quantities three product records with ten units each would show three total items under
+
+00:02:57.320 --> 00:03:07.080
+the current calculation I will clarify the item label or offer a separate total units value all right
+
+00:03:07.080 --> 00:03:17.600
+so next we will scroll up here back to the database logic and we'll take a look right here so with
+
+00:03:17.600 --> 00:03:26.480
+this we are looking at the most significant account storage concern which is how the password
+
+00:03:26.480 --> 00:03:35.520
+is saved directly the login query compares the supplied value against the stored text parameterize
+
+00:03:35.520 --> 00:03:43.760
+this QL as a positive feature but it does not protect passwords stored in plain text I need to address
+
+00:03:43.760 --> 00:03:51.280
+the representations of credentials as well as construction of queries earlier we mentioned the
+
+00:03:51.280 --> 00:04:00.320
+potential use of hash hashing to kind of get around that that plain text from earlier or as
+
+00:04:00.320 --> 00:04:09.200
+mentioned earlier this scheme upgrade method is another important issue it drops both tables and
+
+00:04:09.200 --> 00:04:16.960
+recreates them the code does not run every time the app opens but of a feature database version
+
+00:04:17.520 --> 00:04:24.720
+changes and evokes this upgrade path it removes existing users and inventory a capstone enhancement
+
+00:04:24.720 --> 00:04:34.700
+that changes the scheme must include a migration plan that preserves records and just for context we
+
+00:04:34.700 --> 00:04:55.730
+have our create here and we have our inventory here and then we have the we have the inventory
+
+00:04:55.730 --> 00:05:04.110
+scheme right here validation also needs to exist beyond the screen the database declares quantity
+
+00:05:04.110 --> 00:05:11.470
+as an integer and not null but it does not include a non-negotitive check required text
+
+00:05:11.470 --> 00:05:17.230
+columns do not by themselves prevent empty or white space only values feature import code
+
+00:05:18.270 --> 00:05:23.870
+could bypass the current activity checks so the shared data layer needs to enforce the same rules
+
+00:05:24.830 --> 00:05:34.720
+the update path can encounter a uniqueness conflict if a user changes one records
+
+00:05:34.720 --> 00:05:42.400
+sku to another records sku the current helper does not catch database exceptions and translate them
+
+00:05:42.400 --> 00:05:48.000
+into a structured result that can prevent the activities intended failure message from being
+
+00:05:48.000 --> 00:05:55.360
+reached i would test this explicitly and ensure the existing records remain intact
+
+00:05:55.360 --> 00:06:09.150
+the database operations also called synchronously from activity callbacks small data may hide the
+
+00:06:09.150 --> 00:06:16.110
+cost the larger queries or imports can make the interface less responsive a redesigned data
+
+00:06:16.110 --> 00:06:24.430
+layer should run storage work away from the ui thread and return results in a lifecycle aware
+
+00:06:24.750 --> 00:06:34.830
+way the current scheme represents one shared inventory there's no user ID one inventory records
+
+00:06:35.630 --> 00:06:42.110
+and no user filter on inventory queries i should not claim that each login has a private inventory
+
+00:06:42.670 --> 00:06:47.550
+for the initial enhancement i would document shared inventory as the intended scope unless
+
+00:06:47.550 --> 00:06:53.550
+requirements call for account specific ownership basically building on the
+
+00:06:55.470 --> 00:07:03.740
+login credentials the logins should be or could be the same for a
+
+00:07:06.220 --> 00:07:12.620
+a joint account say like specifically for amazon maybe all of those inventory records and everything
+
+00:07:12.620 --> 00:07:23.020
+will be associated with all those accounts whereas in a transition from say amazon to
+
+00:07:23.020 --> 00:07:31.020
+furtison or another company you know they might have a different login to have their own inventory
+
+00:07:31.020 --> 00:07:37.740
+management for resource handling java manages ordinary object memory but database cursors still
+
+00:07:37.740 --> 00:07:43.820
+need reliable closure these methods close cursors on their normal paths without exception
+
+00:07:45.740 --> 00:07:51.420
+safety note i would use structured resource handling and define database ownership
+
+00:07:52.700 --> 00:07:59.900
+there are no direct import file access to check yet feature csv access must handle
+
+00:07:59.900 --> 00:08:05.740
+and available files closed streams and rollback failed rights sms completion and failure handling
+
+00:08:05.740 --> 00:08:15.330
+also mean open issues all right so next we will open our little thing right here
+
+00:08:15.970 --> 00:08:25.010
+well notepad the first row is valid which will be this row right here it has a name a unique sku
+
+00:08:25.010 --> 00:08:34.130
+and a non-negotiable whole number for quantity and minimum stock the second row is invalid
+
+00:08:34.130 --> 00:08:40.370
+because the quantity says three instead of containing a number the proposed importer would
+
+00:08:40.370 --> 00:08:48.530
+identify that row and explain the error under my planned all or nothing policy neither row
+
+00:08:48.530 --> 00:08:55.810
+would be saved until the file passes validation after correcting three to number three both rows
+
+00:08:55.810 --> 00:09:07.280
+could be imported assuming their SKUs do not already exist i plan to preserve IDs names sku
+
+00:09:07.840 --> 00:09:14.480
+quantities and existing accounts while extending the scheme minimum stock is the field required
+
+00:09:14.480 --> 00:09:19.840
+for the restocking algorithm category and location will make the application more useful for technical
+
+00:09:19.840 --> 00:09:27.120
+supplies manufacturer model and serial number can be added where they fit the type of item being
+
+00:09:27.120 --> 00:09:32.640
+tracked any distinguished box supplies from individual assets a quantity of 20
+
+00:09:33.200 --> 00:09:41.360
+patch cables can reasonably be one inventory record a not a uniquely serialized switch may need
+
+00:09:41.360 --> 00:09:46.480
+is an asset record i'll avoid putting a single serial number on a row that is supposed to
+
+00:09:46.480 --> 00:09:53.360
+represent several different serialized devices i'll also avoid storing the calculated stock status
+
+00:09:53.360 --> 00:09:59.040
+as a second independent value unless there's a clear reason because they could disagree with
+
+00:09:59.040 --> 00:10:07.120
+quantity and minimum stock migration testing will begin with a database populated under the original
+
+00:10:07.120 --> 00:10:14.640
+scheme after the upgrade i would check that the expected records and IDs remain and that new fields
+
+00:10:14.720 --> 00:10:27.040
+have valid defaults password mitigation and migration excuse me password migration
+
+00:10:27.760 --> 00:10:35.360
+needs its own verified path so account access is preserved without keeping plain text credentials
+
+00:10:35.360 --> 00:10:43.920
+in the final storage design csv import is another plain feature i will define required columns
+
+00:10:43.920 --> 00:10:51.360
+supported values and a duplicate policy before implementation my initial proposal
+
+00:10:51.360 --> 00:10:59.680
+requires name sku quantity and minimum stock quantity and minimum stock must be non-negotiative
+
+00:10:59.680 --> 00:11:06.960
+supported integers optional descriptive fields can be blank the import will check for duplicate
+
+00:11:07.520 --> 00:11:14.400
+within the file and exist against existing inventory for the first version and plan to
+
+00:11:14.400 --> 00:11:20.880
+reject duplicates instead of silently operating records an error report should identify the row
+
+00:11:20.880 --> 00:11:29.040
+field and the reason csv parser must handle quote comas and escaped quotas or quotes
+
+00:11:29.440 --> 00:11:37.520
+splitting every line on a comma is not sufficient i plan to validate the file before writing and
+
+00:11:37.520 --> 00:11:44.800
+then use a transaction for the accepted import under this initial all or nothing policy one invalid
+
+00:11:44.800 --> 00:11:52.160
+row prevents the whole batch from being safe and an unexpected right failure rolls back the batch
+
+00:11:54.290 --> 00:11:58.850
+that behavior is easier to explain and verify than silently importing an unknown subset
+
+00:12:00.290 --> 00:12:06.690
+i will also define a file size or row limit so validation does not consume unbounded memory
+
+00:12:07.730 --> 00:12:13.090
+database tests will cover crud duplicate constraints and valid values rollback
+
+00:12:13.730 --> 00:12:19.490
+persistence after relaunch and migration from the original scheme i will also
+
+00:12:20.370 --> 00:12:29.090
+check the revised account storage decision and against the plain text passwords
+
+00:12:31.250 --> 00:12:32.450
+so that we can update it
+
+00:12:36.290 --> 00:12:41.490
+these enhancement demonstrate data modeling integrity
+
+00:12:41.490 --> 00:12:48.690
+persistence secure design and integration between database behavior and the application
+
+00:12:48.690 --> 00:12:57.650
+requirements all right now that we covered that you're going to conclude the next ventory
+
+00:12:58.530 --> 00:13:12.860
+uh sorry about that the the kids started talking again
+
+00:13:14.700 --> 00:13:20.780
+to conclude next ventoria provides an existing foundation that i improve across all three cs
+
+00:13:20.780 --> 00:13:27.260
+499 categories the review shows both the useful functionality already present
+
+00:13:27.260 --> 00:13:32.140
+and specific limitations supported by the code for software design and engineering
+
+00:13:32.140 --> 00:13:37.260
+my plan is to strengthen validation improve account handling separate responsibilities
+
+00:13:37.260 --> 00:13:40.860
+and make navigation and notification behavior more reliable
+
+00:13:41.500 --> 00:13:45.500
+i'll add tests that exercise the real workflows and failure cases
+
+00:13:46.460 --> 00:13:52.060
+for algorithms and data structures i plan to replace the one size fits all stock threshold
+
+00:13:52.060 --> 00:13:55.580
+with per item minimums and a clearly defined resocking order
+
+00:13:57.180 --> 00:14:02.540
+i will implement searching and filtering compare appropriate data structures and evaluate
+
+00:14:03.180 --> 00:14:14.850
+greatness and perform while representative while representative data with representative data
+
+00:14:16.370 --> 00:14:23.170
+for databases i will build on existing SQL light persistence by introducing a structured room layer
+
+00:14:23.970 --> 00:14:31.490
+migration that preserves data strong integrity rules and valid csv import these features will
+
+00:14:32.130 --> 00:14:36.610
+support the restocking logic and practical needs of tracking networking equipment and technical
+
+00:14:36.610 --> 00:14:43.650
+supplies these categories are connected uh priority algorithm depends on valid quantities
+
+00:14:43.650 --> 00:14:50.770
+and minimum stock values the interface needs to communicate those records accurately the database
+
+00:14:50.770 --> 00:14:56.850
+must preserve them and tests must demonstrate that the complete workflow behaves as intended
+
+00:14:57.570 --> 00:15:02.930
+i will document the changes and use github version history to connect each enhancement
+
+00:15:02.930 --> 00:15:08.770
+to the weaknesses it addresses the preserved original will let me show what has changed and
+
+00:15:08.770 --> 00:15:15.650
+explaining why my final evaluation will this is my final evaluation will distinguish implemented
+
+00:15:15.650 --> 00:15:23.330
+features verified results and remaining limitations thank you for watching the next
+
+00:15:23.330 --> 00:15:26.670
+inventory code review video

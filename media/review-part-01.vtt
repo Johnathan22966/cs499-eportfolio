@@ -1,0 +1,358 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:03.270
+Next we will go back into our inventory item.java and now that we are here, let's look
+
+00:00:03.270 --> 00:00:11.070
+at the second category which is algorithms and data structures.
+
+00:00:11.070 --> 00:00:18.790
+Inventory items contains four fields ID, name, SKU and quantity which we have listed right
+
+00:00:18.790 --> 00:00:22.090
+into here.
+
+00:00:22.090 --> 00:00:29.770
+These fields are final and the class exposes, gather, getters instead of setters.
+
+00:00:29.770 --> 00:00:37.730
+Each object represents a snapshot of a stored record, updating inventory changes, the database
+
+00:00:37.730 --> 00:00:43.730
+and then loads new objects for the refresh display.
+
+00:00:43.730 --> 00:01:05.210
+Next we will go into our database helper.java and we will scroll down, this is the area.
+
+00:01:05.210 --> 00:01:10.570
+Database helper returns inventory through, get all inventory items, the method creates
+
+00:01:10.570 --> 00:01:15.890
+an array list, runs a query and loops through the cursor.
+
+00:01:15.890 --> 00:01:21.730
+Each cursor row becomes an inventory item, object that is appended to the list.
+
+00:01:21.730 --> 00:01:30.290
+Main activity then iterates over that list and creates a visual row for each item.
+
+00:01:30.290 --> 00:01:39.250
+An array list is a responsible choice for iterating through records to display them.
+
+00:01:39.250 --> 00:01:45.530
+I do not need to replace it simply to demonstrate a different data structure.
+
+00:01:45.530 --> 00:01:52.570
+The important question is whether its operations fit the feature I am implementing.
+
+00:01:52.570 --> 00:02:00.370
+The current query sorts records alphabetically using order by name ASC, that is existing sorting
+
+00:02:00.370 --> 00:02:05.150
+behavior performed by SQLite.
+
+00:02:05.150 --> 00:02:11.510
+The application does not currently offer a choice of sorting modes.
+
+00:02:11.510 --> 00:02:23.100
+Next we will jump back into our main activity.java and from there we are going to look at
+
+00:02:23.100 --> 00:02:27.760
+this area right here.
+
+00:02:27.760 --> 00:02:35.280
+Inventory item also contains a small classification algorithm and get status.
+
+00:02:35.280 --> 00:02:42.000
+The quantity of zero is out, quantities up to five or low and larger quantities are good.
+
+00:02:42.000 --> 00:02:47.280
+This is a fixed threshold rule, it does not calculate a restocking priority or account
+
+00:02:47.280 --> 00:02:51.560
+for different minimum stock levels for different products.
+
+00:02:51.560 --> 00:02:59.400
+Next we will go back into our inventory item and we will take a look at this bottom portion
+
+00:02:59.400 --> 00:03:04.880
+right here with the get status that I was mentioning previously.
+
+00:03:04.880 --> 00:03:09.400
+The stock threshold is repeated in different forms.
+
+00:03:09.400 --> 00:03:16.520
+Inventory item compares quantity with five as we can see right here.
+
+00:03:16.520 --> 00:03:20.960
+Database helper uses five in its low stock count query.
+
+00:03:20.960 --> 00:03:26.800
+Main activity declares a low stock constant for SMS decisions.
+
+00:03:26.800 --> 00:03:34.000
+These rules could drift apart if I change one location and forget another.
+
+00:03:34.000 --> 00:03:43.080
+For example, let's go back to our database helper and we are going to go down here.
+
+00:03:43.080 --> 00:03:49.470
+This is our low stock count logic.
+
+00:03:49.470 --> 00:03:54.430
+This already handles invalid data differently.
+
+00:03:54.430 --> 00:04:01.310
+A negative quantity would be labeled low by inventory item but it would not appear in
+
+00:04:01.310 --> 00:04:07.670
+the database's low stock query because of that logic.
+
+00:04:07.670 --> 00:04:15.910
+That's also because the quantity is not zero.
+
+00:04:15.910 --> 00:04:20.630
+This is a code path observation, not a claim that I have reproduced negative input through
+
+00:04:20.630 --> 00:04:27.190
+the current keyboard that demonstrates why validation and consistent rules matter together.
+
+00:04:27.190 --> 00:04:33.350
+The search interface is also incompatible or incomplete which will be back over here
+
+00:04:33.350 --> 00:04:44.790
+in the main and it's going to be this line right here.
+
+00:04:44.790 --> 00:04:51.550
+The layout contains an input name search bar but main activity never reads it or attaches
+
+00:04:51.550 --> 00:04:54.270
+search behavior.
+
+00:04:54.270 --> 00:04:58.750
+The navigation search button only scrolls to the top.
+
+00:04:58.750 --> 00:05:05.750
+The hint mentions a barcode even though the model has no barcode field.
+
+00:05:05.750 --> 00:05:15.070
+I need to make the displayed search promise match the implemented data and behavior.
+
+00:05:15.070 --> 00:05:20.190
+For performance, reading all records into objects takes linear work in the number of
+
+00:05:20.190 --> 00:05:25.750
+records and storing that list uses linear space.
+
+00:05:25.750 --> 00:05:30.670
+Using a visual row for each record also grows with inventory size.
+
+00:05:30.670 --> 00:05:36.710
+The SQL ordering can add sorting work, I would inspect the query plan and measure it before
+
+00:05:36.710 --> 00:05:41.350
+making precise database performance claims.
+
+00:05:41.350 --> 00:05:49.870
+The grid refreshes also removes existing rows and rebuilds the display after changes.
+
+00:05:49.870 --> 00:05:57.350
+Not to describe the complete refresh as a simple single loop with a guaranteed linear
+
+00:05:57.350 --> 00:06:03.390
+runtime because view removal, layout and database work contribute additional costs.
+
+00:06:03.390 --> 00:06:09.070
+The important practical finding is that it rebuilds all the split inventory instead of updating
+
+00:06:09.070 --> 00:06:10.670
+the affected item.
+
+00:06:10.670 --> 00:06:19.990
+An empty inventory equal priorities and a search with no results, each needs deliberate
+
+00:06:19.990 --> 00:06:20.990
+behavior.
+
+00:06:20.990 --> 00:06:27.590
+If I introduce a priority calculation, I also need to define what priority means, otherwise
+
+00:06:27.590 --> 00:06:34.350
+an implementation can sort correctly according to its code while still giving the user an
+
+00:06:34.350 --> 00:06:36.990
+unhelpful order.
+
+00:06:36.990 --> 00:06:43.790
+The arithmic checklist is mostly not applicable here, inventory uses, integers with no floating
+
+00:06:43.790 --> 00:06:53.710
+point, calculations or divisions in application logic, integer, conversion and range checking
+
+00:06:53.710 --> 00:06:55.750
+are their relevant risks.
+
+00:06:55.750 --> 00:07:00.830
+The loops have clear stopping conditions, cursor exhaustion, list exhaustion or only
+
+00:07:00.830 --> 00:07:02.910
+the table had a remaining.
+
+00:07:02.910 --> 00:07:06.590
+There are no switch statements needing a default.
+
+00:07:06.590 --> 00:07:12.350
+Zero must be checked before the broader low stock condition regardless of which case is
+
+00:07:12.350 --> 00:07:13.350
+most frequent.
+
+00:07:13.350 --> 00:07:22.270
+Then the permission callback checks a ray length before reading its first result.
+
+00:07:22.270 --> 00:07:31.640
+Next thing that we will get into is the new proposed item adapter.
+
+00:07:31.640 --> 00:07:37.440
+My plan enhancement is a restocking view based on items on minimum stock level, I will
+
+00:07:37.440 --> 00:07:44.560
+define a shortage as the larger of zero or minimum stock minus current quantity for this
+
+00:07:44.560 --> 00:07:50.000
+initial design and item needs restocking when its quantity is below its minimum.
+
+00:07:50.000 --> 00:07:56.920
+And exactly the minimum is shortage zero that boundaries a deliberate change from the original
+
+00:07:56.920 --> 00:08:02.200
+inclusive threshold now document and tested.
+
+00:08:02.200 --> 00:08:09.360
+I will treat a minimum of zero as meaning that the item has no automatic restocking target.
+
+00:08:09.360 --> 00:08:15.520
+An item can still be physically out of stock as zero quantity but it will not enter the
+
+00:08:15.520 --> 00:08:19.400
+restocking list unless its minimum is positive.
+
+00:08:19.400 --> 00:08:24.840
+This keeps physical stock status separate from the decision to reorder.
+
+00:08:24.840 --> 00:08:30.800
+For priority I plan to put out of stock items that need restocking first within that group
+
+00:08:30.800 --> 00:08:38.000
+and then within the remaining restocking items I will order by larger shortage first.
+
+00:08:38.000 --> 00:08:44.200
+Equal shortages will use name and then a stable record ID as tie breakers.
+
+00:08:44.200 --> 00:08:48.800
+That gives the user a repeatable order.
+
+00:08:48.800 --> 00:08:52.360
+Give me just a second the kids are at enough.
+
+00:08:52.360 --> 00:08:55.080
+Alright I am back.
+
+00:08:55.080 --> 00:09:02.160
+So for priority I plan to put out of stock items that need restocking first within that group
+
+00:09:02.160 --> 00:09:07.720
+and then within the remaining stock items I will order by larger shortage first equals
+
+00:09:07.720 --> 00:09:12.560
+shortages will use name and the stable record ID as a tie breaker.
+
+00:09:12.560 --> 00:09:14.520
+That gives the repeatable order.
+
+00:09:14.520 --> 00:09:21.640
+And this example right here we have the adapter which is going to come out first because its
+
+00:09:21.640 --> 00:09:30.420
+quantity is zero and its minimum is positive right here.
+
+00:09:30.420 --> 00:09:34.460
+Last cable comes next because it is seven units below its minimum.
+
+00:09:34.460 --> 00:09:48.840
+We have minimum stock here and then the quantity here and then the spare switch is one unit
+
+00:09:48.840 --> 00:09:58.440
+below its minimum as we can see right here minimum stock of three quantity of two which
+
+00:09:58.440 --> 00:10:01.920
+is why it will go third.
+
+00:10:01.920 --> 00:10:09.040
+The label roll does not need restocking and is excluded from the restocking view.
+
+00:10:09.040 --> 00:10:15.960
+The rule is understandable although it does not yet include equipment criticality so plier
+
+00:10:15.960 --> 00:10:24.360
+lead time or cost those are possible future requirements not part of the initial algorithm.
+
+00:10:24.360 --> 00:10:29.320
+For a screen that shows the complete restocking list I plan to filter an array list and sort
+
+00:10:29.320 --> 00:10:40.080
+it with a comparator filtering is linear and sorting the matching records is typically
+
+00:10:40.080 --> 00:10:49.680
+order k log k where k is the number of matches this is a clear fit for a full ordered display.
+
+00:10:49.680 --> 00:10:56.480
+A priority queue would be useful if the main operation were repeatedly retrieving the next
+
+00:10:56.480 --> 00:11:05.280
+most urgent item however simply iterating over a priority queue does not produce a fully
+
+00:11:05.280 --> 00:11:06.840
+supported display.
+
+00:11:06.840 --> 00:11:15.960
+A hash based structure could support exact SQU lookup or duplicate detection but it would
+
+00:11:15.960 --> 00:11:20.200
+not automatically solve partial name searching.
+
+00:11:20.200 --> 00:11:27.880
+I will choose structures based on these operations rather than adding complexity without a reason.
+
+00:11:27.880 --> 00:11:34.920
+I also plan to connect the search field to name an SQU meaning define case handling and
+
+00:11:34.920 --> 00:11:42.520
+provide stock filters and sorting choices for larger inventories database side filtering
+
+00:11:42.520 --> 00:11:53.410
+and a recycler view are options to reduce unnecessarily loading and view creation test
+
+00:11:53.410 --> 00:12:00.530
+will cover an empty list never stocking candidates equal priorities zero minimum stock quantities
+
+00:12:00.530 --> 00:12:06.810
+exactly at the minimum and no result searches I will use larger generated inventories to
+
+00:12:06.810 --> 00:12:12.290
+measure behavior and report the device and data set size the category will demonstrate
+
+00:12:12.290 --> 00:12:18.530
+the algorithm design data structure selection complexity analysis and evaluation of trade
+
+00:12:18.530 --> 00:12:27.730
+offs all right so next we can minimize this logic back down and we will go up to database
+
+00:12:27.730 --> 00:12:38.890
+helper dot Java and first things first we are going to scroll up to the beginning right
+
+00:12:38.890 --> 00:12:46.480
+here with the database helper and just for reference we will highlight from here down
+
+00:12:46.480 --> 00:12:51.430
+to here the third category is databases the application already uses persistent SQL light
