@@ -1,0 +1,10 @@
+
+com.example.nexventory.ExampleInstrumentedTest:.
+com.example.nexventory.RestockDatabaseTest:..
+com.example.nexventory.RoomDatabaseTest:...
+
+Time: 8.931
+
+OK (6 tests)
+
+
