@@ -1,24 +1,17 @@
-# Nexventory CS 499 Milestone Three
+# Nexventory final artifact
 
-Author: Johnathan Roehsner. Prepared September 27, 2026.
+Author: Johnathan Roehsner. CS 499, October 2026.
 
-This submission implements the algorithms and data structures enhancement from the Milestone One code review: per-item minimum stock, shortage calculations, deterministic restock priority, stock filters, and sorting choices. The companion Word narrative is submitted separately.
+One selected artifact with three enhancement categories. Source snapshots:
+original (CS 360 baseline), milestone_two (software design), milestone_three
+(algorithms), and enhanced (final Room database version). Open enhanced in
+Android Studio. The final narratives are in the portfolio downloads directory.
 
-## Contents
+The source code was retained during the final presentation revision. The final
+standalone regression result is docs/FINAL_REGRESSION_2026-10-16.txt. Earlier
+JUnit/Gradle and emulator reports are preserved with their execution boundaries.
+The app does not isolate inventory by account and is not presented as ready for
+sensitive production data. SMS delivery and physical-device behavior are unverified.
 
-- `original/`: preserved CS 360 Project Three source used for the earlier milestone.
-- `milestone_two/`: preserved immediate starting point, including the completed software engineering improvements.
-- `enhanced/`: Milestone Three Android Studio project, including all prior improvements and the new restocking features.
-- `docs/`: implementation notes, complexity analysis, test evidence, revision history, file hashes, and the Android Studio checklist.
-
-Open **enhanced**, not the parent directory, in Android Studio. Let Android Studio resolve the local SDK location. Gradle wrapper files are included. Machine-specific local.properties, build products, and caches are intentionally excluded.
-
-## Verification status
-
-Completed: dependency-free algorithm regression suite (59,321 assertions), six standalone JUnit tests (including one inherited starter test), comparative benchmark, desktop SQLite schema and migration checks, and XML parsing. These results are recorded with their scope in `docs/VERIFICATION.md`.
-
-Android verification completed in the user environment: the user supplied BUILD SUCCESSFUL for :app:testDebugUnitTest (3 seconds) and :app:connectedDebugAndroidTest (37 seconds). Screenshots and user confirmations cover the manual restocking, sorting, filtering, persistence, validation and regression checks listed in `docs/VERIFICATION.md`. Earlier agent-side file-access failures are retained as historical context. Detailed Android test reports were not supplied; per-test instrumentation counts are not asserted.
-
-## Rubric connection
-
-The rubric asks for planned Category Two enhancements and an accompanying narrative explaining the artifact choice and demonstrated skills. `enhanced/app/src/main/java/com/example/nexventory/InventoryAlgorithms.java` contains the collection and comparator work; `verification/` and the test folders provide the evaluation. The Word narrative addresses artifact history, selection and improvements, course outcomes, and reflection. No grade is guaranteed by this package.
+See enhanced/DATABASE_ENHANCEMENT.md and docs/Verification_Results.md for design,
+reproduction commands, data preservation rules, import limits, and remaining checks.
